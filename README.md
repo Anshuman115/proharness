@@ -190,8 +190,9 @@ pnpm test         # unit tests (plan parser, diff parser, review verdicts)
 pnpm dist:linux
 ```
 
-Outputs `release/ProHarness-*.AppImage` and `release/proharness_*.deb`. The config lives in
-`electron-builder.yml`.
+Outputs `release/ProHarness-*.AppImage` and `release/proharness_*.deb` for Linux x64. The config
+lives in `electron-builder.yml`. Set the target architecture explicitly with `--arm64` (and stage an
+arm64 Claude binary) if you need ARM64 Linux.
 
 The build is cross-platform-aware. `scripts/fetch-linux-sdk.mjs` downloads the matching Linux
 Claude Code binary into `.cache/linux-sdk/` (about 326 MB), and `scripts/after-pack.cjs` copies it
