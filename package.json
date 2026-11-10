@@ -15,7 +15,7 @@
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "rebuild": "electron-builder install-app-deps",
-    "dist:linux": "node scripts/fetch-linux-sdk.mjs && npm run build && electron-builder --linux AppImage deb",
+    "dist:linux": "node scripts/fetch-linux-sdk.mjs && npm run build && electron-builder --linux AppImage deb --x64",
     "dist:dir": "npm run build && electron-builder --dir",
     "pack:linux:dir": "node scripts/fetch-linux-sdk.mjs && npm run build && electron-builder --linux dir --x64",
     "postinstall": "node scripts/postinstall.cjs",
