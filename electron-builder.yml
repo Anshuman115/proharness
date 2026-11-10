@@ -1,0 +1,77 @@
+appId: dev.proharness.app
+productName: ProHarness
+copyright: Copyright © 2026 ProHarness
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**/*
+  - package.json
+  - "!**/*.map"
+  - "!**/*.ts"
+  - "!**/node_modules/.cache/**"
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/**"
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-win32-*/**"
+
+asar: true
+asarUnpack:
+  - node_modules/node-pty/**/*
+  - node_modules/@homebridge/node-pty-prebuilt-multiarch/**/*
+  - node_modules/@anthropic-ai/claude-agent-sdk/**/*
+  - node_modules/@anthropic-ai/claude-agent-sdk-linux-*/**/*
+
+npmRebuild: false
+afterPack: scripts/after-pack.cjs
+compression: maximum
+removePackageScripts: true
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Development
+  icon: build/icon.png
+  executableName: proharness
+  syncDesktopName: true
+  maintainer: ProHarness <maintainers@proharness.dev>
+  synopsis: Claude Code control room with plans, diffs, shell and autonomous review
+  description: >-
+    ProHarness is a desktop control room for Claude Code with tabbed streaming sessions,
+    permission dialogs, a PTY terminal, git diff review, cross-model delegation, markdown
+    goals and an autonomous implement/review/commit loop.
+  desktop:
+    entry:
+      Name: ProHarness
+      Comment: Claude Code control room
+      Categories: Development;
+      StartupWMClass: ProHarness
+      Keywords: claude;code;agent;git;development;
+
+appImage:
+  artifactName: ProHarness-${version}.${ext}
+
+deb:
+  artifactName: proharness_${version}_${arch}.${ext}
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libsecret-1-0
+
+publish: null
+
+electronDownload:
+  cache: .cache/electron
+
+toolsets:
+  appimage: 1.0.3

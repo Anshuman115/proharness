@@ -1,0 +1,63 @@
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { GitService } from '../src/main/services/git'
+
+let root = ''
+let service: GitService
+
+function git(...args: string[]): string {
+  return execFileSync('git', args, { cwd: root, encoding: 'utf8' })
+}
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'proharness-git-'))
+  git('init', '-q')
+  git('config', 'user.email', 'test@proharness.local')
+  git('config', 'user.name', 'ProHarness Test')
+  writeFileSync(join(root, 'hello.txt'), 'one\ntwo\n')
+  git('add', '-A')
+  git('commit', '-qm', 'initial')
+  service = new GitService(() => root)
+})
+
+afterEach(() => {
+  service.dispose()
+  rmSync(root, { recursive: true, force: true })
+})
+
+describe('GitService', () => {
+  it('reports a clean tree and branch', async () => {
+    const summary = await service.summary()
+    expect(summary.isRepo).toBe(true)
+    expect(summary.clean).toBe(true)
+    expect(summary.files).toHaveLength(0)
+  })
+
+  it('detects a tracked modification and produces a diff', async () => {
+    writeFileSync(join(root, 'hello.txt'), 'one\nTWO\nthree\n')
+    const summary = await service.summary()
+    expect(summary.clean).toBe(false)
+    expect(summary.files[0]).toMatchObject({ path: 'hello.txt', status: 'modified', additions: 2 })
+    const diff = await service.fileDiff('hello.txt')
+    expect(diff.diff).toContain('-two')
+    expect(diff.diff).toContain('+TWO')
+  })
+
+  it('restores a tracked file and rejects path escapes', async () => {
+    writeFileSync(join(root, 'hello.txt'), 'changed\n')
+    await service.restoreFile('hello.txt')
+    const summary = await service.summary()
+    expect(summary.clean).toBe(true)
+    await expect(service.fileDiff('../escape.txt')).rejects.toThrow(/relative|escapes/)
+  })
+
+  it('commits all changes and reports the hash', async () => {
+    writeFileSync(join(root, 'new.txt'), 'new\n')
+    const result = await service.commitAll('test commit')
+    expect(result.hash).toMatch(/^[0-9a-f]{7,}$/)
+    expect((await service.summary()).clean).toBe(true)
+  })
+})

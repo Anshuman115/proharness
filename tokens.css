@@ -1,0 +1,112 @@
+/* Hallmark · macrostructure: Workbench Split · tone: warm-technical · anchor hue: 68 (amber/copper)
+ * mode: operate · theme: custom — charcoal paper, copper accent, serif display + mono utility
+ * fonts: Iowan Old Style / Avenir Next / SF Mono (system, no network)
+ * surfaces: rail, transcript, inspector · motion-cut: transform/opacity only
+ */
+:root {
+  color-scheme: dark;
+
+  --color-bg: oklch(13.4% 0.008 64);
+  --color-bg-deep: oklch(10.6% 0.006 64);
+  --color-surface: oklch(17.2% 0.009 66);
+  --color-surface-raised: oklch(20.6% 0.011 66);
+  --color-surface-hover: oklch(24.2% 0.013 68);
+  --color-surface-inset: oklch(15.1% 0.008 64);
+  --color-line: oklch(27.4% 0.011 67);
+  --color-line-strong: oklch(36.2% 0.014 67);
+  --color-ink: oklch(92.6% 0.014 79);
+  --color-ink-soft: oklch(82.2% 0.017 79);
+  --color-muted: oklch(65.2% 0.016 77);
+  --color-faint: oklch(48.4% 0.012 76);
+  --color-accent: oklch(78.2% 0.145 70);
+  --color-accent-strong: oklch(83.5% 0.16 74);
+  --color-accent-soft: oklch(66% 0.095 67);
+  --color-accent-ink: oklch(21% 0.035 63);
+  --color-accent-wash: oklch(24% 0.035 68);
+  --color-success: oklch(75.4% 0.125 155);
+  --color-success-wash: oklch(23% 0.033 156);
+  --color-warning: oklch(80% 0.14 84);
+  --color-warning-wash: oklch(24% 0.035 85);
+  --color-danger: oklch(68.2% 0.185 27);
+  --color-danger-strong: oklch(74% 0.19 27);
+  --color-danger-wash: oklch(23.5% 0.045 27);
+  --color-info: oklch(78% 0.075 226);
+  --color-info-wash: oklch(23% 0.025 230);
+  --color-focus: oklch(84% 0.145 72);
+  --color-diff-add: oklch(77% 0.125 152);
+  --color-diff-del: oklch(72% 0.165 27);
+  --color-diff-add-bg: oklch(22% 0.037 154);
+  --color-diff-del-bg: oklch(22% 0.045 28);
+  --color-diff-hunk: oklch(22% 0.025 240);
+  --color-user: oklch(78% 0.09 228);
+  --color-user-wash: oklch(22% 0.025 228);
+
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --font-body: "Avenir Next", "Segoe UI Variable", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "SFMono-Regular", "JetBrains Mono", "Cascadia Code", "Roboto Mono", Menlo, monospace;
+
+  --text-2xs: 0.625rem;
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-md: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.55rem;
+  --text-3xl: 2.1rem;
+  --text-display: clamp(2.1rem, 4vw, 3.65rem);
+  --text-display-s: clamp(1.8rem, 3vw, 2.7rem);
+
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+  --space-3xl: 4.5rem;
+
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+  --radius-round: 999px;
+
+  --rule-hairline: 1px;
+  --rule-strong: 2px;
+
+  --shadow-panel: 0 24px 70px oklch(3% 0.01 60 / 0.55);
+  --shadow-pop: 0 12px 36px oklch(3% 0.01 60 / 0.62);
+  --shadow-inset: inset 0 1px 0 oklch(100% 0 0 / 0.035);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 320ms;
+
+  --rail-width: 258px;
+  --workbench-width: 410px;
+  --appbar-height: 44px;
+  --statusbar-height: 28px;
+
+  --texture-grain: oklch(100% 0 0 / 0.012);
+  --texture-glow: oklch(78% 0.14 68 / 0.028);
+}
+
+@media (max-width: 1320px) {
+  :root {
+    --rail-width: 238px;
+    --workbench-width: 374px;
+  }
+}
+
+@media (max-width: 1160px) {
+  :root {
+    --rail-width: 222px;
+    --workbench-width: 340px;
+  }
+}

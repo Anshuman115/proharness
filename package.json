@@ -1,0 +1,57 @@
+{
+  "name": "proharness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A desktop control room for Claude Code: sessions, permissions, plans, diffs and autonomous task execution.",
+  "main": "./out/main/index.js",
+  "author": {
+    "name": "ProHarness",
+    "email": "maintainers@proharness.dev"
+  },
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "rebuild": "electron-builder install-app-deps",
+    "dist:linux": "node scripts/fetch-linux-sdk.mjs && npm run build && electron-builder --linux AppImage deb",
+    "dist:dir": "npm run build && electron-builder --dir",
+    "pack:linux:dir": "node scripts/fetch-linux-sdk.mjs && npm run build && electron-builder --linux dir --x64",
+    "postinstall": "node scripts/postinstall.cjs",
+    "test": "vitest run",
+    "fetch:linux-sdk": "node scripts/fetch-linux-sdk.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.322",
+    "@homebridge/node-pty-prebuilt-multiarch": "0.15.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "^1.71.0",
+    "node-pty": "^1.1.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.6.7",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.7",
+    "vitest": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "homepage": "https://github.com/anshumantripathy/proharness",
+  "desktopName": "proharness.desktop"
+}

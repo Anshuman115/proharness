@@ -1,0 +1,13 @@
+node_modules/
+out/
+release/
+dist/
+.cache/
+.DS_Store
+*.log
+.proharness/
+.env
+.env.local
+.pnpm-store/
+*.tsbuildinfo
+docs/.DS_Store
