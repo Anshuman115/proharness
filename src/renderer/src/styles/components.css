@@ -1741,8 +1741,7 @@ button.context-next:hover {
 
 .loop-task {
   padding: var(--space-sm);
-  border: var(--rule-hairline) solid var(--color-line);
-  border-left: 2px solid var(--color-accent);
+  border: var(--rule-hairline) solid color-mix(in oklch, var(--color-accent) 22%, var(--color-line));
   border-radius: var(--radius-sm);
   background: var(--color-surface);
 }

@@ -597,7 +597,6 @@ pre {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--color-accent-soft), var(--color-accent));
-  transition: width var(--dur-slow) var(--ease-out);
 }
 
 .progress-track--lg {
