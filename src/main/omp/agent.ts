@@ -256,7 +256,7 @@ export class OmpAgent {
     this.closed = true
     this.abortPending()
     if (this.stateTimer) clearTimeout(this.stateTimer)
-    await this.rpc.close()
+    await this.rpc.close().catch((error) => console.error('Closing omp failed:', error))
   }
 
   private abortPending(): void {

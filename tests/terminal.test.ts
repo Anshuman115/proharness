@@ -2,6 +2,7 @@ import { posix } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { TerminalLaunch, WorkspaceHost } from '../src/main/host/host'
 import { TerminalService } from '../src/main/services/terminal'
+import { WorkspaceGate } from '../src/main/services/workspace-gate'
 
 function launch(cwd: string, shell: string): TerminalLaunch {
   return { command: shell, ptyArgs: ['-l'], pipeArgs: ['-i'], cwd, env: {}, shell }
@@ -23,12 +24,16 @@ function deferredHost(): {
   }
 }
 
-function makeService(host: WorkspaceHost): { service: TerminalService; spawn: ReturnType<typeof vi.fn> } {
+function makeService(
+  host: WorkspaceHost,
+  gate?: WorkspaceGate
+): { service: TerminalService; spawn: ReturnType<typeof vi.fn> } {
   const spawn = vi.fn(() => fakePty())
   const service = new TerminalService(
     () => '/work',
     () => '/bin/zsh',
-    () => host
+    () => host,
+    gate
   )
   ;(service as unknown as { ptyModule: unknown }).ptyModule = { spawn }
   return { service, spawn }
@@ -37,6 +42,36 @@ function makeService(host: WorkspaceHost): { service: TerminalService; spawn: Re
 const input = { id: 't1', cwd: '', cols: 80, rows: 24 }
 
 describe('TerminalService create races', () => {
+
+  it('rejects a create while a workspace transition is busy', async () => {
+    const { host } = deferredHost()
+    const gate = new WorkspaceGate()
+    const { service, spawn } = makeService(host, gate)
+    gate.begin()
+    try {
+      await expect(service.create(input)).rejects.toThrow(/workspace is changing/)
+      expect(spawn).not.toHaveBeenCalled()
+    } finally {
+      gate.end()
+    }
+  })
+
+  it('rejects a pending create when a transition begins before the launch resolves', async () => {
+    const { host, resolveNext } = deferredHost()
+    const gate = new WorkspaceGate()
+    const { service, spawn } = makeService(host, gate)
+    const creating = service.create(input)
+    const expectation = expect(creating).rejects.toThrow(/workspace is changing/)
+    gate.begin()
+    try {
+      resolveNext(launch('/work', '/bin/zsh'))
+      await expectation
+      expect(spawn).not.toHaveBeenCalled()
+    } finally {
+      gate.end()
+    }
+  })
+
   it('cancels a pending create when the terminal is killed', async () => {
     const { host, resolveNext } = deferredHost()
     const { service, spawn } = makeService(host)

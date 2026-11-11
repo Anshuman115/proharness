@@ -10,6 +10,15 @@ export type Frame = Record<string, unknown> & { type: string }
 
 /** Rejects `request()` calls that receive no response within this window. */
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
+/** Extra wait after SIGKILL before `close()` reports a forced-close error. */
+const KILL_WAIT_MS = 2_500
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref()
+  })
+}
 
 interface RpcSpawnOptions {
   /** Spawns the child; may resolve asynchronously. */
@@ -115,6 +124,7 @@ export class OmpRpc extends EventEmitter {
   private stderrTail = ''
   private starting: Promise<void> | null = null
   private closing = false
+  private closingPromise: Promise<void> | null = null
   private readyPromise: Promise<void>
   private resolveReady!: () => void
   private rejectReady!: (error: Error) => void
@@ -305,31 +315,48 @@ export class OmpRpc extends EventEmitter {
     this.pending.clear()
   }
 
-  /** Closes stdin so omp drains and exits; kills it if it lingers. */
-  async close(graceMs = 4_000): Promise<void> {
+  /** Closes stdin so omp drains and exits; escalates to SIGKILL and waits for real death. */
+  close(graceMs = 4_000): Promise<void> {
+    if (this.closingPromise) return this.closingPromise
+    this.closingPromise = this.doClose(graceMs)
+    return this.closingPromise
+  }
+
+  private async doClose(graceMs: number): Promise<void> {
     this.closing = true
-    if (!this.child) {
-      // A start may still be spawning; let it see the closing flag and kill the child.
-      if (this.starting) await this.starting.catch(() => undefined)
-      return
+    // Readiness callers fail now instead of waiting for the ready timer (up to 90s).
+    this.rejectReady(new Error('omp start was cancelled.'))
+    if (!this.child && this.starting) {
+      // A start may still be spawning; give it the grace window to expose the late
+      // child (begin() kills it) rather than hanging on a never-resolving spawn.
+      await Promise.race([this.starting.catch(() => undefined), delay(graceMs)])
     }
     const child = this.child
-    if (this.exited) return
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.kill()
-        resolve()
-      }, graceMs)
-      timer.unref()
-      child.once('exit', () => {
-        clearTimeout(timer)
-        resolve()
-      })
-      try {
-        child.stdin.end()
-      } catch {
-        this.kill()
+    if (!child || this.exited) return
+    const dead = this.waitForDeath(child)
+    try {
+      child.stdin.end()
+    } catch {
+      this.kill()
+    }
+    if (await Promise.race([dead, delay(graceMs).then(() => false)])) return
+    this.kill()
+    if (await Promise.race([dead, delay(KILL_WAIT_MS).then(() => false)])) return
+    const error = new Error('omp did not exit after SIGKILL.')
+    this.failAll(error)
+    throw error
+  }
+
+  private waitForDeath(child: ChildProcessWithoutNullStreams): Promise<boolean> {
+    if (this.exited) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const done = (): void => {
+        child.removeListener('exit', done)
+        child.removeListener('close', done)
+        resolve(true)
       }
+      child.once('exit', done)
+      child.once('close', done)
     })
   }
 

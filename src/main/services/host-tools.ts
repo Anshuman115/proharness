@@ -1,3 +1,4 @@
+import { DESIGN_FILE, PLAN_DIR, PLAN_FILE } from '@shared/defaults'
 import type { GoalDetail, TaskRef } from '@shared/types'
 import type { HostTool } from '../omp/agent'
 import type { GitService } from './git'
@@ -33,10 +34,10 @@ function formatGoal(goal: GoalDetail): string {
     `Design: ${goal.designPath}`,
     `Plan: ${goal.planPath}`,
     '',
-    '## DESIGN.md',
+    `## ${DESIGN_FILE}`,
     goal.design.slice(0, 80_000),
     '',
-    '## PLAN.md',
+    `## ${PLAN_FILE}`,
     phases.slice(0, 80_000)
   ].join('\n')
 }
@@ -63,17 +64,17 @@ export function createPlanTools(options: {
   allowComplete: boolean
 }): HostTool[] {
   const { plan, git } = options
-  const goalArg = { type: 'string', description: 'Goal folder id under goals/, e.g. checkout-redesign' }
+  const goalArg = { type: 'string', description: `Goal folder id under ${PLAN_DIR}/, e.g. checkout-redesign` }
 
   const tools: HostTool[] = [
     {
       name: 'plan_list',
       label: 'Plan: list goals',
-      description: 'List the project goals under goals/ with progress and open-task counts.',
+      description: `List the project goals under ${PLAN_DIR}/ with progress and open-task counts.`,
       parameters: obj({}),
       run: async () => {
         const goals = await plan.listGoals()
-        if (!goals.length) return 'No goals found under goals/. A goal is a folder with DESIGN.md and PLAN.md.'
+        if (!goals.length) return `No goals found under ${PLAN_DIR}/. A goal is a folder with ${DESIGN_FILE} and ${PLAN_FILE}.`
         return goals
           .map((goal) => `- ${goal.id}: ${goal.title} — ${goal.progress}% (${goal.openCount} open / ${goal.taskCount} tasks) — ${goal.status}`)
           .join('\n')
@@ -82,13 +83,13 @@ export function createPlanTools(options: {
     {
       name: 'plan_read',
       label: 'Plan: read goal',
-      description: 'Read a goal DESIGN.md and its PLAN.md checklist, or every goal when no id is given.',
+      description: `Read a goal ${DESIGN_FILE} and its ${PLAN_FILE} checklist, or every goal when no id is given.`,
       parameters: obj({ goal: goalArg }),
       run: async (args) => {
         const goal = str(args.goal)
         if (goal) return formatGoal(await plan.readGoal(goal))
         const goals = await plan.listGoals()
-        if (!goals.length) return 'No goals found under goals/.'
+        if (!goals.length) return `No goals found under ${PLAN_DIR}/.`
         const formatted = await Promise.all(
           goals.map(async (summary) => {
             try {
@@ -114,7 +115,7 @@ export function createPlanTools(options: {
     {
       name: 'plan_add_note',
       label: 'Plan: add note',
-      description: 'Append a short progress or review note beneath a task in a goal PLAN.md.',
+      description: `Append a short progress or review note beneath a task in a goal ${PLAN_FILE}.`,
       parameters: obj(
         { goal: goalArg, task_id: { type: 'string', description: 'Task id such as 1.2' }, note: { type: 'string' } },
         ['goal', 'task_id', 'note']
@@ -148,7 +149,7 @@ export function createPlanTools(options: {
     tools.splice(3, 0, {
       name: 'plan_complete_task',
       label: 'Plan: check off task',
-      description: 'Check off a task in a goal PLAN.md. Use only after the work is implemented and verified.',
+      description: `Check off a task in a goal ${PLAN_FILE}. Use only after the work is implemented and verified.`,
       parameters: obj(
         {
           goal: goalArg,
@@ -171,8 +172,8 @@ export function createPlanTools(options: {
 }
 
 export const PLAN_SYSTEM_PROMPT = [
-  'This workspace is driven by ProHarness. Project plans live in goals/<goal>/DESIGN.md (design) and goals/<goal>/PLAN.md (phases with `- [ ]` task checklists).',
+  `This workspace is driven by ProHarness. Project plans live in ${PLAN_DIR}/<goal>/${DESIGN_FILE} (design) and ${PLAN_DIR}/<goal>/${PLAN_FILE} (phases with \`- [ ]\` task checklists).`,
   'Use the plan_list, plan_read and plan_next_task tools to understand the plan before broad changes.',
   'Only check off a task with plan_complete_task after the work is implemented and verified.',
-  'The goals/ folder is local planning state and is never committed; do not git add it.'
+  `The ${PLAN_DIR}/ folder is local planning state and is never committed; do not git add it.`
 ].join(' ')

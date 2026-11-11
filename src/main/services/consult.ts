@@ -3,6 +3,7 @@ import { toolLabel } from '@shared/defaults'
 import type { ConsultEvent, ConsultRequest } from '@shared/types'
 import type { AgentFactory } from './agents'
 import type { GitService } from './git'
+import { WorkspaceGate } from './workspace-gate'
 
 /**
  * One-shot second opinion from any omp model. The consulted model can read
@@ -10,12 +11,17 @@ import type { GitService } from './git'
  */
 export class ConsultService {
   private running = new Map<string, AbortController>()
+  private runs = new Set<Promise<void>>()
   private emit: (event: ConsultEvent) => void = () => undefined
+  private readonly gate: WorkspaceGate
 
   constructor(
     private readonly agents: Pick<AgentFactory, 'reviewer'>,
-    private readonly git: GitService
-  ) {}
+    private readonly git: GitService,
+    gate: WorkspaceGate = new WorkspaceGate()
+  ) {
+    this.gate = gate
+  }
 
   setEmitter(emitter: (event: ConsultEvent) => void): void {
     this.emit = emitter
@@ -24,14 +30,22 @@ export class ConsultService {
   async start(request: ConsultRequest): Promise<{ requestId: string }> {
     if (!request.model.trim()) throw new Error('Choose a model to consult.')
     if (!request.prompt.trim()) throw new Error('Write a question first.')
+    this.gate.assertOpen()
     const requestId = randomUUID()
     const controller = new AbortController()
     this.running.set(requestId, controller)
-    void this.run(requestId, request, controller.signal)
+    const run = this.run(requestId, request, controller.signal, this.gate.current())
+    this.runs.add(run)
+    void run.finally(() => this.runs.delete(run))
     return { requestId }
   }
 
-  private async run(requestId: string, request: ConsultRequest, signal: AbortSignal): Promise<void> {
+  private async run(
+    requestId: string,
+    request: ConsultRequest,
+    signal: AbortSignal,
+    token: number
+  ): Promise<void> {
     let prompt = [
       'You are giving a second opinion to an engineer. You can read files in this repository but must not modify anything.',
       'Be concrete and concise. Do not claim to have changed files.',
@@ -41,6 +55,7 @@ export class ConsultService {
     try {
       if (request.includeDiff) {
         const { summary, diff, truncated } = await this.git.reviewDiff(120_000)
+        this.gate.assertOpen(token)
         prompt += summary.files.length
           ? `\n\nCurrent working-tree diff${truncated ? ' (truncated)' : ''}:\n\`\`\`diff\n${diff}\n\`\`\``
           : '\n\n(The working tree has no changes.)'
@@ -58,8 +73,26 @@ export class ConsultService {
           }
         }
       })
+      let closePromise: Promise<void> | null = null
+      const closeAgent = (): Promise<void> => {
+        if (!closePromise) closePromise = agent.close().catch(() => undefined)
+        return closePromise
+      }
+      const onAbort = (): void => {
+        void closeAgent()
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
       try {
+        this.gate.assertOpen(token)
+        if (signal.aborted) {
+          this.emit({ type: 'error', requestId, message: 'Cancelled.' })
+          return
+        }
         await agent.start()
+        if (signal.aborted) {
+          this.emit({ type: 'error', requestId, message: 'Cancelled.' })
+          return
+        }
         const result = await agent.runTurn(prompt, signal)
         if (signal.aborted || result.status === 'aborted') {
           this.emit({ type: 'error', requestId, message: 'Cancelled.' })
@@ -69,10 +102,12 @@ export class ConsultService {
           this.emit({ type: 'done', requestId, text: result.text, costUsd: result.costUsd })
         }
       } finally {
-        await agent.close().catch(() => undefined)
+        signal.removeEventListener('abort', onAbort)
+        await closeAgent()
       }
     } catch (error) {
-      this.emit({ type: 'error', requestId, message: (error as Error).message })
+      if (signal.aborted) this.emit({ type: 'error', requestId, message: 'Cancelled.' })
+      else this.emit({ type: 'error', requestId, message: (error as Error).message })
     } finally {
       this.running.delete(requestId)
     }
@@ -82,8 +117,9 @@ export class ConsultService {
     this.running.get(requestId)?.abort()
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     for (const controller of this.running.values()) controller.abort()
     this.running.clear()
+    await Promise.allSettled([...this.runs])
   }
 }

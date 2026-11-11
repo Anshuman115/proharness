@@ -205,6 +205,11 @@ function summarizeGoal(
   }
 }
 
+interface PlanTarget {
+  host: WorkspaceHost
+  path: string
+}
+
 export class PlanService {
   private readonly watcher = new PollingWatcher<GoalSummary[]>({
     load: () => this.listGoals(),
@@ -220,13 +225,26 @@ export class PlanService {
   ) {}
 
   get goalsRoot(): string {
-    return this.host().path.join(this.workspace(), PLAN_DIR)
+    return this.goalsRootAt(this.target())
+  }
+
+  private target(): PlanTarget {
+    return { host: this.host(), path: this.workspace() }
+  }
+
+  private goalsRootAt(target: PlanTarget): string {
+    return target.host.path.join(target.path, PLAN_DIR)
   }
 
   async ensureRoot(): Promise<void> {
-    const host = this.host()
-    await host.mkdirp(this.goalsRoot)
-    const readme = host.path.join(this.goalsRoot, 'README.md')
+    await this.ensureRootAt(this.target())
+  }
+
+  private async ensureRootAt(target: PlanTarget): Promise<void> {
+    const host = target.host
+    const root = this.goalsRootAt(target)
+    await host.mkdirp(root)
+    const readme = host.path.join(root, 'README.md')
     if (!(await host.stat(readme))) {
       await host.writeText(
         readme,
@@ -265,11 +283,13 @@ export class PlanService {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 60) || 'goal'
-    const host = this.host()
-    await this.ensureRoot()
+    const target = this.target()
+    const host = target.host
+    const root = this.goalsRootAt(target)
+    await this.ensureRootAt(target)
     let id = base
-    for (let n = 2; await host.stat(host.path.join(this.goalsRoot, id)); n += 1) id = `${base}-${n}`
-    const dir = host.path.join(this.goalsRoot, id)
+    for (let n = 2; await host.stat(host.path.join(root, id)); n += 1) id = `${base}-${n}`
+    const dir = host.path.join(root, id)
     await host.mkdirp(dir)
     await host.writeText(
       host.path.join(dir, DESIGN_FILE),
@@ -298,16 +318,17 @@ export class PlanService {
     )
     this.resetWatching()
     this.emitChanged()
-    const summary = (await this.listGoals()).find((goal) => goal.id === id)
+    const summary = (await this.listGoalsAt(target)).find((goal) => goal.id === id)
     if (!summary) throw new Error('The goal was created but could not be read back.')
     return summary
   }
 
-  private async ensureGoal(goalId: string): Promise<string> {
+  private async ensureGoalAt(target: PlanTarget, goalId: string): Promise<string> {
     if (!GOAL_ID_RE.test(goalId)) throw new Error('Invalid goal id.')
-    const host = this.host()
-    const dir = host.path.resolve(this.goalsRoot, goalId)
-    if (!dir.startsWith(host.path.resolve(this.goalsRoot) + host.path.sep)) throw new Error('Invalid goal path.')
+    const host = target.host
+    const root = this.goalsRootAt(target)
+    const dir = host.path.resolve(root, goalId)
+    if (!dir.startsWith(host.path.resolve(root) + host.path.sep)) throw new Error('Invalid goal path.')
     const info = await host.stat(dir)
     if (!info || !info.isDirectory) {
       throw new Error(`Goal "${goalId}" was not found under goals/.`)
@@ -316,16 +337,21 @@ export class PlanService {
   }
 
   async listGoals(): Promise<GoalSummary[]> {
-    const host = this.host()
-    if (!(await host.stat(this.goalsRoot))) return []
-    const entries = await host.readdir(this.goalsRoot)
+    return this.listGoalsAt(this.target())
+  }
+
+  private async listGoalsAt(target: PlanTarget): Promise<GoalSummary[]> {
+    const host = target.host
+    const root = this.goalsRootAt(target)
+    if (!(await host.stat(root))) return []
+    const entries = await host.readdir(root)
 
     const goals: GoalSummary[] = []
     for (const entry of entries) {
       if (!entry.isDirectory || entry.name.startsWith('.')) continue
       const id = entry.name
       if (!GOAL_ID_RE.test(id)) continue
-      const dir = host.path.join(this.goalsRoot, id)
+      const dir = host.path.join(root, id)
       const designPath = host.path.join(dir, DESIGN_FILE)
       const planPath = host.path.join(dir, PLAN_FILE)
       const designInfo = await host.stat(designPath)
@@ -344,8 +370,12 @@ export class PlanService {
   }
 
   async readGoal(goalId: string): Promise<GoalDetail> {
-    const host = this.host()
-    const dir = await this.ensureGoal(goalId)
+    return this.readGoalAt(this.target(), goalId)
+  }
+
+  private async readGoalAt(target: PlanTarget, goalId: string): Promise<GoalDetail> {
+    const host = target.host
+    const dir = await this.ensureGoalAt(target, goalId)
     const designPath = host.path.join(dir, DESIGN_FILE)
     const planPath = host.path.join(dir, PLAN_FILE)
     const designInfo = await host.stat(designPath)
@@ -366,7 +396,7 @@ export class PlanService {
   }
 
   async nextTask(goalId: string): Promise<TaskRef | null> {
-    const detail = await this.readGoal(goalId)
+    const detail = await this.readGoalAt(this.target(), goalId)
     for (const phase of detail.phases) {
       const task = phase.tasks.find((candidate) => !candidate.checked)
       if (task) {
@@ -381,15 +411,15 @@ export class PlanService {
     return null
   }
 
-  private async writePlan(goalId: string, content: string): Promise<void> {
-    const dir = await this.ensureGoal(goalId)
-    const target = this.host().path.join(dir, PLAN_FILE)
-    await this.host().writeText(target, content)
+  private async writePlanAt(target: PlanTarget, goalId: string, content: string): Promise<void> {
+    const dir = await this.ensureGoalAt(target, goalId)
+    await target.host.writeText(target.host.path.join(dir, PLAN_FILE), content)
     this.emitChanged()
   }
 
   async setTaskChecked(goalId: string, taskId: string, checked: boolean, note?: string): Promise<GoalDetail> {
-    const detail = await this.readGoal(goalId)
+    const target = this.target()
+    const detail = await this.readGoalAt(target, goalId)
     const task = detail.phases.flatMap((phase) => phase.tasks).find((item) => item.id === taskId)
     if (!task) throw new Error(`Task "${taskId}" was not found in ${goalId}.`)
     const eol = detail.plan.includes('\r\n') ? '\r\n' : '\n'
@@ -402,13 +432,14 @@ export class PlanService {
       const next = lines[task.line]
       if (next !== completion) lines.splice(task.line, 0, completion)
     }
-    await this.writePlan(goalId, lines.join(eol))
-    return this.readGoal(goalId)
+    await this.writePlanAt(target, goalId, lines.join(eol))
+    return this.readGoalAt(target, goalId)
   }
 
   async addTaskNote(goalId: string, taskId: string, note: string): Promise<GoalDetail> {
     if (!note.trim()) throw new Error('A note is required.')
-    const detail = await this.readGoal(goalId)
+    const target = this.target()
+    const detail = await this.readGoalAt(target, goalId)
     const task = detail.phases.flatMap((phase) => phase.tasks).find((item) => item.id === taskId)
     if (!task) throw new Error(`Task "${taskId}" was not found in ${goalId}.`)
     const eol = detail.plan.includes('\r\n') ? '\r\n' : '\n'
@@ -423,8 +454,8 @@ export class PlanService {
       insertAt += 1
     }
     lines.splice(insertAt, 0, entry)
-    await this.writePlan(goalId, lines.join(eol))
-    return this.readGoal(goalId)
+    await this.writePlanAt(target, goalId, lines.join(eol))
+    return this.readGoalAt(target, goalId)
   }
 
   onChange(listener: (goals: GoalSummary[]) => void): () => void {

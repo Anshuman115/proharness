@@ -92,7 +92,9 @@ export interface PublicSettings {
   reduceMotion: boolean
 }
 
-export type SettingsPatch = Partial<Omit<PublicSettings, 'workspaceName' | 'recentWorkspaces' | 'modelNotes'>>
+export type SettingsPatch = Partial<
+  Omit<PublicSettings, 'workspaceName' | 'recentWorkspaces' | 'modelNotes' | 'workspacePath' | 'workspaceHost'>
+>
 
 export interface Bootstrap {
   settings: PublicSettings

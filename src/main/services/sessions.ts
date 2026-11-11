@@ -7,6 +7,7 @@ import type { OmpAgent } from '../omp/agent'
 import type { AgentFactory } from './agents'
 import type { SettingsService } from './settings'
 import type { UiBroker } from './ui-broker'
+import { WorkspaceGate } from './workspace-gate'
 
 interface RuntimeSession {
   tabId: string
@@ -31,12 +32,7 @@ export function sessionDirFor(cwd: string, home = homedir()): string {
 
 /** Reads the cwd recorded in an omp session file header. */
 async function sessionCwd(host: WorkspaceHost, file: string): Promise<string | null> {
-  let head: string
-  try {
-    head = await readHead(host, file, 16 * 1024)
-  } catch {
-    return null
-  }
+  const head = await readHead(host, file, 16 * 1024)
   for (const line of head.split('\n')) {
     if (!line.includes('"type":"session"')) continue
     try {
@@ -122,13 +118,17 @@ export class SessionManager {
   private emit: (tabId: string, event: SessionEvent) => void = () => undefined
   private generation = 0
   private pending = new Map<string, { generation: number; cancelled: boolean }>()
+  private readonly gate: WorkspaceGate
 
   constructor(
     private readonly settings: SettingsService,
     private readonly agents: Pick<AgentFactory, 'chat'>,
     private readonly broker: UiBroker,
-    private readonly host: () => WorkspaceHost
-  ) {}
+    private readonly host: () => WorkspaceHost,
+    gate: WorkspaceGate = new WorkspaceGate()
+  ) {
+    this.gate = gate
+  }
 
   setEmitter(emitter: (tabId: string, event: SessionEvent) => void): void {
     this.emit = emitter
@@ -150,6 +150,8 @@ export class SessionManager {
   async create(input: SessionCreateInput): Promise<void> {
     if (!TAB_ID_RE.test(input.tabId)) throw new Error('Invalid session id.')
     if (this.sessions.has(input.tabId)) return
+    this.gate.assertOpen()
+    const token = this.gate.current()
     const tabId = input.tabId
     const previous = this.pending.get(tabId)
     if (previous) previous.cancelled = true
@@ -169,6 +171,12 @@ export class SessionManager {
       if (reservation.cancelled) {
         await agent.close()
         throw new Error('Session start was cancelled.')
+      }
+      try {
+        this.gate.assertOpen(token)
+      } catch (error) {
+        await agent.close()
+        throw error
       }
       if (this.sessions.has(tabId)) {
         await agent.close()

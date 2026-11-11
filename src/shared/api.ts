@@ -27,7 +27,7 @@ import type {
   WorkspaceRef
 } from './types'
 
-type Unsubscribe = () => void
+export type Unsubscribe = () => void
 
 export interface ProHarnessApi {
   bootstrap(): Promise<Bootstrap>

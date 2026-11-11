@@ -314,19 +314,6 @@ export class SettingsService {
   }
 
   update(patch: SettingsPatch): PublicSettings {
-    if (patch.workspacePath !== undefined) {
-      const next = patch.workspacePath.trim()
-      if (!next || !existsSync(next) || !statSync(next).isDirectory()) {
-        throw new Error('Workspace folder does not exist.')
-      }
-      if (this.settings.workspaceHost !== 'local') this.resolved = null
-      this.settings.workspacePath = next
-      this.settings.workspaceHost = 'local'
-    }
-    if (patch.workspaceHost !== undefined && patch.workspaceHost.trim() && patch.workspaceHost.trim() !== this.settings.workspaceHost) {
-      this.settings.workspaceHost = patch.workspaceHost.trim()
-      this.resolved = null
-    }
     if (patch.ompPath !== undefined) this.settings.ompPath = patch.ompPath.trim()
     // Model choices belong to the active host.
     const host = this.settings.workspaceHost

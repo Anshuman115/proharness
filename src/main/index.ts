@@ -1,9 +1,9 @@
 import { app, BrowserWindow, Menu, session, shell } from 'electron'
 import { join } from 'node:path'
-import { CH } from '@shared/channels'
 import type { WorkspaceHost } from './host/host'
 import { HostRegistry } from './host/registry'
 import { registerIpc } from './ipc'
+import type { EventSenders } from './ipc/registry'
 import { AgentFactory } from './services/agents'
 import { ConsultService } from './services/consult'
 import { GitService } from './services/git'
@@ -15,6 +15,8 @@ import { TaskLoopService } from './services/task-loop'
 import { TerminalService } from './services/terminal'
 import { UiBroker } from './services/ui-broker'
 import { LoginShare } from './services/login-share'
+import { WorkspaceGate } from './services/workspace-gate'
+import { WorkspaceService } from './services/workspace'
 
 let mainWindow: BrowserWindow | null = null
 let cleanup: (() => Promise<void>) | null = null
@@ -40,6 +42,7 @@ if (!gotLock) {
 
     const settings = new SettingsService()
     const registry = new HostRegistry()
+    const gate = new WorkspaceGate()
     const activeHost = (): WorkspaceHost => registry.get(settings.workspaceHost)
     let loginShare: LoginShare
     const omp = new OmpService(
@@ -58,46 +61,36 @@ if (!gotLock) {
     const git = new GitService(activeHost, () => settings.workspacePath)
     const broker = new UiBroker()
     const agents = new AgentFactory(settings, omp, plan, git, broker, activeHost)
-    const sessions = new SessionManager(settings, agents, broker, activeHost)
-    const consult = new ConsultService(agents, git)
+    const sessions = new SessionManager(settings, agents, broker, activeHost, gate)
+    const consult = new ConsultService(agents, git, gate)
     const terminal = new TerminalService(
       () => settings.workspacePath,
       () => settings.terminalShell,
-      activeHost
+      activeHost,
+      gate
     )
-    const loop = new TaskLoopService(plan, git, agents)
+    const loop = new TaskLoopService(plan, git, agents, gate)
 
-    const send = (channel: string, ...args: unknown[]): void => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
-    }
+    let events: EventSenders
 
-    sessions.setEmitter((tabId, event) => send(CH.sessionEvent, tabId, event))
-    broker.setEmitters(
-      (request) => send(CH.uiRequest, request),
-      (requestId) => send(CH.uiResolved, requestId)
-    )
-    terminal.setEmitter(
-      (event) => send(CH.terminalData, event),
-      (event) => send(CH.terminalExit, event)
-    )
-    consult.setEmitter((event) => send(CH.consultEvent, event))
-    loop.setEmitter((event) => send(CH.loopEvent, event))
-    // Re-check this host's saved model choices whenever its catalog changes.
-    const applyCatalog = (): void => {
-      const status = omp.current()
-      if (status.hostId !== settings.workspaceHost) return
-      settings.resolveFor(status.models, status.defaultModel)
-      send(CH.settingsChanged, settings.publicSettings())
-    }
-    omp.onChange((status) => {
-      send(CH.ompChanged, status)
-      applyCatalog()
+    const workspace = new WorkspaceService({
+      settings,
+      registry,
+      omp,
+      loginShare,
+      loop,
+      consult,
+      broker,
+      sessions,
+      terminal,
+      plan,
+      git,
+      gate,
+      onGoals: (goals) => events.goals.onChanged(goals),
+      onGit: (summary) => events.git.onChanged(summary)
     })
-    applyCatalog()
-    plan.onChange((goals) => send(CH.goalsChanged, goals))
-    git.onChanged((summary) => send(CH.gitChanged, summary))
 
-    registerIpc({
+    events = registerIpc({
       getWindow: () => mainWindow,
       appVersion: app.getVersion(),
       settings,
@@ -110,35 +103,57 @@ if (!gotLock) {
       broker,
       terminal,
       consult,
-      loop
+      loop,
+      workspace
     })
+
+    sessions.setEmitter((tabId, event) => events.sessions.onEvent(tabId, event))
+    broker.setEmitters(
+      (request) => events.ui.onRequest(request),
+      (requestId) => events.ui.onResolved(requestId)
+    )
+    terminal.setEmitter(
+      (event) => events.terminal.onData(event),
+      (event) => events.terminal.onExit(event)
+    )
+    consult.setEmitter((event) => events.consult.onEvent(event))
+    loop.setEmitter((event) => events.loop.onEvent(event))
+    // Re-check this host's saved model choices whenever its catalog changes.
+    const applyCatalog = (): void => {
+      const status = omp.current()
+      if (status.hostId !== settings.workspaceHost) return
+      settings.resolveFor(status.models, status.defaultModel)
+      events.settings.onChanged(settings.publicSettings())
+    }
+    omp.onChange((status) => {
+      events.omp.onChanged(status)
+      applyCatalog()
+    })
+    applyCatalog()
+    plan.onChange((goals) => events.goals.onChanged(goals))
+    git.onChanged((summary) => events.git.onChanged(summary))
 
     buildMenu()
     createWindow((window) => {
       // A reload or crash orphans every tab, so close their omp processes.
       window.webContents.on('did-start-navigation', (details) => {
         if (details.isMainFrame && !details.isSameDocument) {
-          broker.cancelAll()
-          void sessions.dispose()
+          void workspace.restartAgents().catch((error) => console.error('Restart agents failed:', error))
         }
       })
       window.webContents.on('render-process-gone', () => {
-        broker.cancelAll()
-        void sessions.dispose()
+        void workspace.restartAgents().catch((error) => console.error('Restart agents failed:', error))
       })
     })
     void omp.refresh()
 
     cleanup = async (): Promise<void> => {
-      broker.cancelAll()
-      consult.dispose()
+      await workspace.restartAgents()
       loop.dispose()
-      terminal.dispose()
       plan.dispose()
       git.dispose()
       loginShare.dispose()
       registry.dispose()
-      await sessions.dispose()
     }
   })
 

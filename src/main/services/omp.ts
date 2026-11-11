@@ -236,7 +236,7 @@ export class OmpService {
         checkedAt: Date.now()
       })
     } finally {
-      if (rpc) await rpc.close(2_000)
+      if (rpc) await rpc.close(2_000).catch((error) => console.error('Closing the omp probe failed:', error))
     }
   }
 

@@ -36,8 +36,10 @@ export class HostRegistry {
     let config: string
     try {
       config = readFileSync(join(homedir(), '.ssh', 'config'), 'utf8')
-    } catch {
-      return []
+    } catch (error) {
+      // No config file is normal; an unreadable one is a real failure.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
     }
     return parseSshConfigHosts(config)
   }

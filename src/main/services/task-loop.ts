@@ -16,6 +16,7 @@ import type { TurnResult } from '../omp/agent'
 import type { GitService } from './git'
 import type { PlanService } from './plan'
 import { buildReviewPrompt, parseReview } from './review'
+import { WorkspaceGate } from './workspace-gate'
 
 const TASK_TIMEOUT_MS = 30 * 60_000
 const REVIEW_TIMEOUT_MS = 15 * 60_000
@@ -95,12 +96,18 @@ export class TaskLoopService {
   private emit: (event: LoopEvent) => void = () => undefined
   private abortController: AbortController | null = null
   private implementer: LoopAgent | null = null
+  private startTask: Promise<LoopState> | null = null
+  private runDone: Promise<void> | null = null
+  private readonly gate: WorkspaceGate
 
   constructor(
     private readonly plan: PlanService,
     private readonly git: GitService,
-    private readonly agents: LoopAgentFactory
-  ) {}
+    private readonly agents: LoopAgentFactory,
+    gate: WorkspaceGate = new WorkspaceGate()
+  ) {
+    this.gate = gate
+  }
 
   setEmitter(emitter: (event: LoopEvent) => void): void {
     this.emit = emitter
@@ -151,6 +158,19 @@ export class TaskLoopService {
   }
 
   async start(config: LoopConfig): Promise<LoopState> {
+    if (this.startTask) throw new Error('A task loop is starting or active. Stop it before starting another.')
+    const task = this.beginRun(config)
+    this.startTask = task
+    try {
+      return await task
+    } finally {
+      if (this.startTask === task) this.startTask = null
+    }
+  }
+
+  private async beginRun(config: LoopConfig): Promise<LoopState> {
+    this.gate.assertOpen()
+    const token = this.gate.current()
     if (isLoopLive(this.state.status)) {
       throw new Error('A task loop is already active. Stop it before starting another.')
     }
@@ -161,8 +181,10 @@ export class TaskLoopService {
       throw new Error('The reviewer must be a different model from the implementer.')
     }
     const goal = await this.plan.readGoal(config.goalId)
+    this.gate.assertOpen(token)
     if (!goal.openCount) throw new Error('This goal has no open tasks.')
     const git = await this.git.summary()
+    this.gate.assertOpen(token)
     if (!git.isRepo) throw new Error('The workspace is not a git repository.')
     if (!git.clean) {
       throw new Error(
@@ -170,6 +192,7 @@ export class TaskLoopService {
       )
     }
     await this.git.excludeGoals()
+    this.gate.assertOpen(token)
 
     const normalized: LoopConfig = {
       ...config,
@@ -200,8 +223,16 @@ export class TaskLoopService {
       this.log('warn', 'Approvals are off (yolo). The implementer runs commands without asking; the review gate and Stop still apply.')
     }
     this.emitState()
-    void this.run(normalized)
+    this.runDone = this.run(normalized)
     return this.getState()
+  }
+
+  /** Waits for a pending start and the current run (and implementer close) to finish. */
+  async drain(): Promise<void> {
+    const pending = this.startTask
+    if (pending) await pending.catch(() => undefined)
+    await this.stop()
+    await this.runDone
   }
 
   async pause(): Promise<LoopState> {
@@ -409,14 +440,27 @@ export class TaskLoopService {
 
   private async run(config: LoopConfig): Promise<void> {
     const signal = this.abortController!.signal
+    let implementer: LoopAgent | null = null
+    let closePromise: Promise<void> | null = null
+    const closeImplementer = (): Promise<void> => {
+      if (!implementer) return Promise.resolve()
+      if (!closePromise) closePromise = implementer.close().catch(() => undefined)
+      return closePromise
+    }
+    const onAbort = (): void => {
+      void closeImplementer()
+    }
     try {
-      this.implementer = await this.agents.implementer({
+      implementer = await this.agents.implementer({
         model: config.implementerModel,
         approval: config.approval,
         label: `Loop · ${this.state.goalTitle || config.goalId}`,
         onEvent: this.onAgentEvent
       })
-      await this.implementer.start()
+      this.implementer = implementer
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) throw new Error('aborted')
+      await implementer.start()
 
       while (true) {
         await this.checkpoint(signal)
@@ -471,9 +515,9 @@ export class TaskLoopService {
         this.log('error', (error as Error).message)
       }
     } finally {
-      const implementer = this.implementer
+      signal.removeEventListener('abort', onAbort)
       this.implementer = null
-      await implementer?.close().catch(() => undefined)
+      await closeImplementer()
       if (this.state.status === 'running' || this.state.status === 'paused') this.state.status = 'complete'
       this.state.finishedAt = Date.now()
       this.state.liveTool = null
@@ -485,6 +529,5 @@ export class TaskLoopService {
 
   dispose(): void {
     this.abortController?.abort()
-    void this.implementer?.close()
   }
 }

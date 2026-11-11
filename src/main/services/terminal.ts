@@ -8,6 +8,7 @@ import type {
   TerminalExitEvent
 } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
+import { WorkspaceGate } from './workspace-gate'
 
 const require = createRequire(__filename)
 
@@ -42,12 +43,15 @@ export class TerminalService {
   private ptyLoadError: string | null = null
   private generation = 0
   private pending = new Map<string, { generation: number; cancelled: boolean }>()
+  private readonly gate: WorkspaceGate
 
   constructor(
     private readonly workspace: () => string,
     private readonly defaultShell: () => string,
-    private readonly host: () => WorkspaceHost
+    private readonly host: () => WorkspaceHost,
+    gate: WorkspaceGate = new WorkspaceGate()
   ) {
+    this.gate = gate
     try {
       this.ptyModule = require('@homebridge/node-pty-prebuilt-multiarch') as PtyModule
     } catch (error) {
@@ -66,6 +70,8 @@ export class TerminalService {
   async create(input: TerminalCreateInput): Promise<TerminalCreateResult> {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(input.id)) throw new Error('Invalid terminal id.')
     if (this.sessions.has(input.id)) this.kill(input.id)
+    this.gate.assertOpen()
+    const token = this.gate.current()
     const host = this.host()
     const workspace = host.path.resolve(this.workspace())
     const requested = host.path.resolve(workspace, input.cwd || '.')
@@ -81,6 +87,7 @@ export class TerminalService {
       if (reservation.cancelled || reservation.generation !== this.generation) {
         throw new Error('Terminal start was cancelled.')
       }
+      this.gate.assertOpen(token)
 
       if (this.ptyModule) {
         try {

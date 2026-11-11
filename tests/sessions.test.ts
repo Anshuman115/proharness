@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { OmpAgent } from '../src/main/omp/agent'
 import type { AgentFactory } from '../src/main/services/agents'
+import type { WorkspaceHost } from '../src/main/host/host'
 import { LocalHost } from '../src/main/host/local'
 import { SessionManager } from '../src/main/services/sessions'
+import { WorkspaceGate } from '../src/main/services/workspace-gate'
 import type { SettingsService } from '../src/main/services/settings'
 import type { UiBroker } from '../src/main/services/ui-broker'
 
@@ -20,13 +22,14 @@ function fakeAgent(): OmpAgent & { close: ReturnType<typeof vi.fn>; start: Retur
   } as unknown as OmpAgent & { close: ReturnType<typeof vi.fn>; start: ReturnType<typeof vi.fn> }
 }
 
-function build(chat: () => Promise<OmpAgent>): SessionManager {
+function build(chat: () => Promise<OmpAgent>, gate?: WorkspaceGate, host: WorkspaceHost = new LocalHost()): SessionManager {
   const settings = { workspacePath: '' } as unknown as SettingsService
   return new SessionManager(
     settings,
     { chat } as unknown as Pick<AgentFactory, 'chat'>,
     { cancelOrigin: vi.fn() } as unknown as UiBroker,
-    () => new LocalHost()
+    () => host,
+    gate
   )
 }
 
@@ -70,6 +73,32 @@ describe('SessionManager pending creates', () => {
 
     await sessions.close('tab-2')
     expect(secondAgent.close).toHaveBeenCalledTimes(1)
+  })
+
+
+  it('rejects a create while a workspace transition is busy', async () => {
+    const chat = vi.fn()
+    const gate = new WorkspaceGate()
+    gate.begin()
+    try {
+      await expect(build(chat, gate).create({ tabId: 'tab-gate', title: 'Gate' })).rejects.toThrow(
+        /workspace is changing/
+      )
+      expect(chat).not.toHaveBeenCalled()
+    } finally {
+      gate.end()
+    }
+  })
+
+  it('propagates a session-file read failure on resume', async () => {
+    const host = {
+      readFile: vi.fn(async () => {
+        throw new Error('ssh connection dropped')
+      })
+    } as unknown as WorkspaceHost
+    await expect(build(vi.fn(), undefined, host).resume('tab-4', '/sessions/x.jsonl')).rejects.toThrow(
+      /ssh connection dropped/
+    )
   })
 
   it('closes a created agent when the workspace changes during setup', async () => {
