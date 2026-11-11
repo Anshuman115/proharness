@@ -190,7 +190,9 @@ if (!gotLock) {
     const run = cleanup
     cleanup = null
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5_000))
-    void Promise.race([run(), timeout]).finally(() => app.quit())
+    void Promise.race([run(), timeout])
+      .catch((error) => console.error('Cleanup failed:', error))
+      .finally(() => app.quit())
   })
 }
 

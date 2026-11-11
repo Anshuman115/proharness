@@ -1,3 +1,4 @@
+import { DEFAULT_REVIEWER } from './defaults'
 import type { HostModelPrefs, ModelInfo } from './types'
 
 /** Default choices per role, tried in order until one exists on the host. */
@@ -5,7 +6,7 @@ const ROLE_PREFERENCES = {
   chat: [] as string[],
   implementer: [] as string[],
   reviewer: [
-    'anthropic/claude-sonnet-5-5',
+    DEFAULT_REVIEWER,
     'commandcode/claude-sonnet-5-5',
     'openai-codex/gpt-6.1-sol',
     'commandcode/gpt-6.1-sol',
@@ -41,6 +42,24 @@ function modelTail(key: string): string {
   return slash >= 0 ? bare.slice(slash + 1) : bare
 }
 
+export function providerOf(key: string): string {
+  return key.split('/')[0]
+}
+
+/** True when two `provider/id` model keys refer to the same underlying model family. */
+export function sameModel(a: string, b: string): boolean {
+  const strip = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/:[a-z]+$/, '')
+      .split('/')
+      .slice(1)
+      .join('/')
+      .replace(/^.*\//, '')
+      .replace(/-(fast|ultrafast|\d{8})$/, '')
+  return Boolean(a && b) && strip(a) === strip(b)
+}
+
 interface Resolution {
   /** Model to use; '' means "omp default" (only allowed for chat and implementer). */
   model: string
@@ -67,9 +86,9 @@ export function resolveModel(
   if (!saved && role !== 'reviewer') return { model: '', note: null }
 
   const tail = saved ? modelTail(saved) : ''
-  const sameModel = tail ? models.find((model) => model.id === tail || model.id.endsWith(`/${tail}`)) : undefined
+  const sameTail = tail ? models.find((model) => model.id === tail || model.id.endsWith(`/${tail}`)) : undefined
   const fallback =
-    sameModel?.key ||
+    sameTail?.key ||
     ROLE_PREFERENCES[role].find((key) => has(key)) ||
     (role === 'reviewer' && hostDefault && has(hostDefault) ? stripEffort(hostDefault) : '')
   if (!saved) return { model: fallback, note: null }

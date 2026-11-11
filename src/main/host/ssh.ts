@@ -35,10 +35,6 @@ export class SshHost implements WorkspaceHost {
     this.controlPath = join(dir, '%C')
   }
 
-  get label(): string {
-    return this.id
-  }
-
   /** Options shared by every ssh invocation. */
   sshArgs(extra: string[] = []): string[] {
     return [
@@ -158,10 +154,9 @@ export class SshHost implements WorkspaceHost {
 
   spawn(spec: SpawnSpec): ChildProcessWithoutNullStreams {
     const line = shellLine(spec.command, spec.args)
-    const ttyFlags = spec.tty ? ['-tt'] : ['-T']
-    const command = `${spec.tty ? '' : this.spawnPrefix}${spec.tty ? line : `exec ${line}`}`
+    const command = `${this.spawnPrefix}exec ${line}`
     // ssh needs the env synchronously here; fall back to the parent env.
-    return spawnPiped('ssh', [...this.sshArgs(ttyFlags), this.remoteScript(command, spec.cwd, spec.env)], {
+    return spawnPiped('ssh', [...this.sshArgs(['-T']), this.remoteScript(command, spec.cwd, spec.env)], {
       env: sshClientEnv({ ...process.env, ...this.cachedLocal })
     })
   }

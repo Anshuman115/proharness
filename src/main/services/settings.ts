@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, posix } from 'node:path'
+import { dirname, join } from 'node:path'
 import { app } from 'electron'
+import { DEFAULT_REVIEWER } from '@shared/defaults'
 import { DEFAULT_PINNED, emptyPrefs, resolveModel } from '@shared/models'
 import {
   APPROVAL_MODES,
@@ -108,7 +109,7 @@ export class SettingsService {
       workspaceHost: 'local',
       recentWorkspaces: [],
       ompPath: process.env.PROHARNESS_OMP || '',
-      models: { local: { ...emptyPrefs(), reviewerModel: 'anthropic/claude-sonnet-5-5' } },
+      models: { local: { ...emptyPrefs(), reviewerModel: DEFAULT_REVIEWER } },
       shareLoginHosts: [],
       chatApproval: 'write',
       loopApproval: 'yolo',
@@ -121,7 +122,17 @@ export class SettingsService {
   private load(): StoredSettings {
     const defaults = this.defaults()
     const stored = readJson<Record<string, unknown>>(this.filePath)
-    if (!stored) return defaults
+    if (!stored) {
+      if (existsSync(this.filePath)) {
+        // Keep the unreadable file for the user instead of overwriting it on the next save.
+        try {
+          renameSync(this.filePath, `${this.filePath}.corrupt`)
+        } catch {
+          // Best effort.
+        }
+      }
+      return defaults
+    }
     const workspaceHost =
       typeof stored.workspaceHost === 'string' && stored.workspaceHost.trim()
         ? stored.workspaceHost.trim()
@@ -238,7 +249,6 @@ export class SettingsService {
       workspacePath: this.workspacePath,
       workspaceHost: this.settings.workspaceHost,
       workspaceName: remote ? `${base} @ ${this.settings.workspaceHost}` : base,
-      goalsPath: remote ? posix.join(this.workspacePath, 'goals') : join(this.workspacePath, 'goals'),
       recentWorkspaces: this.settings.recentWorkspaces.map((item) => ({ ...item })),
       ompPath: this.settings.ompPath,
       chatModel: this.effective().chatModel,
@@ -246,7 +256,6 @@ export class SettingsService {
       implementerModel: this.effective().implementerModel,
       reviewerModel: this.effective().reviewerModel,
       modelNotes: [...this.effective().notes],
-      shareLoginHosts: [...this.settings.shareLoginHosts],
       loopApproval: this.settings.loopApproval,
       pinnedModels: [...this.settings.pinnedModels],
       terminalShell: this.settings.terminalShell,

@@ -1,4 +1,5 @@
 import { GitCompare, MessagesSquare, Repeat, Terminal } from 'lucide-react'
+import { isLoopLive } from '@shared/defaults'
 import { useAppStore, type WorkbenchTab } from '../store'
 import { ChangesPanel } from './ChangesPanel'
 import { ConsultPanel } from './ConsultPanel'
@@ -18,7 +19,7 @@ export function Workbench(): React.JSX.Element {
   const setWorkbenchTab = useAppStore((state) => state.setWorkbenchTab)
   const git = useAppStore((state) => state.git)
   const loop = useAppStore((state) => state.loop)
-  const loopLive = ['running', 'paused', 'stopping'].includes(loop.status)
+  const loopLive = isLoopLive(loop.status)
 
   return (
     <aside className={`workbench ${rightOpen ? '' : 'is-collapsed'}`} aria-label="Workbench">

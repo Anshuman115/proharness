@@ -143,11 +143,7 @@ describe('PlanService goal creation and missing plans', () => {
     expect(detail.openCount).toBe(0)
     expect(detail.progress).toBe(0)
     expect(detail.status).toBe('active')
-    // Current behavior: an empty plan yields the same empty "Tasks" phase twice.
-    expect(detail.phases.map((phase) => [phase.title, phase.tasks.length])).toEqual([
-      ['Tasks', 0],
-      ['Tasks', 0]
-    ])
+    expect(detail.phases.map((phase) => [phase.title, phase.tasks.length])).toEqual([['Tasks', 0]])
     expect(await service.nextTask('demo')).toBeNull()
   })
 })

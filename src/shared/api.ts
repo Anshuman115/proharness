@@ -57,7 +57,6 @@ export interface ProHarnessApi {
 
   goals: {
     list(): Promise<GoalSummary[]>
-    init(): Promise<{ root: string; tracked: boolean }>
     create(title: string): Promise<GoalSummary>
     read(goalId: string): Promise<GoalDetail>
     toggleTask(goalId: string, taskId: string, checked: boolean): Promise<GoalDetail>

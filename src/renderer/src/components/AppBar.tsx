@@ -1,4 +1,5 @@
 import { FolderOpen, PanelLeft, PanelRight, Server, Settings } from 'lucide-react'
+import { isLoopLive } from '@shared/defaults'
 import { useAppStore } from '../store'
 import { basename, stepLabel } from '../lib/format'
 
@@ -12,7 +13,7 @@ export function AppBar(): React.JSX.Element {
   const setWorkbenchTab = useAppStore((state) => state.setWorkbenchTab)
   const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
   const setWorkspaceOpen = useAppStore((state) => state.setWorkspaceOpen)
-  const loopLive = ['running', 'paused', 'stopping'].includes(loop.status)
+  const loopLive = isLoopLive(loop.status)
   const remote = settings ? settings.workspaceHost !== 'local' : false
 
   return (

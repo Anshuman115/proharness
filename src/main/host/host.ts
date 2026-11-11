@@ -39,16 +39,12 @@ export interface SpawnSpec {
   args: string[]
   cwd: string
   env?: Record<string, string>
-  /** Allocate a TTY (remote shells). */
-  tty?: boolean
 }
 
 export interface WorkspaceHost {
   readonly kind: 'local' | 'ssh'
   /** "local" or the ssh destination, e.g. "devbox". */
   readonly id: string
-  /** Human label, e.g. "devbox" or "This Mac". */
-  readonly label: string
 
   /** Runs a program (no shell) and resolves even on non-zero exit. */
   exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>

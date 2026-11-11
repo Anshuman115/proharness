@@ -7,7 +7,7 @@ interface ReviewVerdict {
   parseWarning: string | null
 }
 
-export const REVIEWER_SYSTEM = [
+const REVIEWER_SYSTEM = [
   'You are an independent, skeptical senior code reviewer. You did not write this code.',
   'You may read files in the repository for context, but never modify anything.',
   'Always end your answer with the exact VERDICT/SUMMARY/FINDINGS format you are given.'
@@ -19,7 +19,6 @@ export function buildReviewPrompt(options: {
   design: string
   diff: string
   diffTruncated: boolean
-  extraInstructions?: string
 }): string {
   const design = options.design.slice(0, 12_000)
   const taskBlock = options.task
@@ -29,7 +28,7 @@ export function buildReviewPrompt(options: {
         `Phase: ${options.task.phaseTitle}`
       ].join('\n')
     : 'No specific task was supplied. Review the entire working-tree change set.'
-  return [
+  const body = [
     'Decide whether the working-tree diff below correctly and safely completes the task, without scope creep or regressions.',
     'Read surrounding files with your read-only tools when the diff alone is not enough. Do not edit files or run commands that change state.',
     '',
@@ -46,8 +45,6 @@ export function buildReviewPrompt(options: {
     options.diff || '(no diff produced)',
     options.diffTruncated ? '\n… diff truncated before review' : '',
     '```',
-    '',
-    options.extraInstructions?.trim() || '',
     '',
     'Review rules:',
     '- APPROVE only when the diff is a plausible, complete implementation of the task with no obvious security, data-loss, or unrelated destructive changes.',
@@ -69,6 +66,7 @@ export function buildReviewPrompt(options: {
   ]
     .filter((line, index, array) => line !== '' || array[index - 1] !== '')
     .join('\n')
+  return `${REVIEWER_SYSTEM}\n\n${body}`
 }
 
 /** Parses the reviewer reply. Anything without a clear verdict fails closed. */
@@ -95,18 +93,4 @@ export function parseReview(text: string): ReviewVerdict {
     notes: `VERDICT: ${verdict}\n\n${findings.trim()}`.slice(0, 12_000),
     parseWarning: null
   }
-}
-
-/** True when two `provider/id` model keys refer to the same underlying model family. */
-export function sameModel(a: string, b: string): boolean {
-  const strip = (value: string): string =>
-    value
-      .toLowerCase()
-      .replace(/:[a-z]+$/, '')
-      .split('/')
-      .slice(1)
-      .join('/')
-      .replace(/^.*\//, '')
-      .replace(/-(fast|ultrafast|\d{8})$/, '')
-  return Boolean(a && b) && strip(a) === strip(b)
 }

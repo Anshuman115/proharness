@@ -1,8 +1,9 @@
 import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, posix } from 'node:path'
+import { DEFAULT_SESSION_TITLE, titleFromText } from '@shared/defaults'
 import type { ApprovalMode, RecentSession, SessionCreateInput, SessionEvent, ThinkingLevel } from '@shared/types'
-import type { DirEntry, WorkspaceHost } from '../host/host'
+import type { WorkspaceHost } from '../host/host'
 import type { SshHost } from '../host/ssh'
 import { OmpAgent } from '../omp/agent'
 import type { GitService } from './git'
@@ -109,12 +110,8 @@ async function readHead(host: WorkspaceHost, file: string, bytes: number): Promi
 async function listRecentSessions(host: WorkspaceHost, cwd: string, limit = 25): Promise<RecentSession[]> {
   const home = host.kind === 'ssh' ? await (host as SshHost).home() : homedir()
   const dir = sessionDirFor(cwd, home)
-  let entries: DirEntry[]
-  try {
-    entries = await host.readdir(dir)
-  } catch {
-    return []
-  }
+  if (!(await host.stat(dir))) return []
+  const entries = await host.readdir(dir)
   const items: Array<{ file: string; mtime: number }> = []
   for (const entry of entries) {
     if (entry.isDirectory || !entry.name.endsWith('.jsonl')) continue
@@ -212,7 +209,7 @@ export class SessionManager {
     const ompPath = await this.omp.binary(host)
     const env = host.kind === 'local' ? await this.omp.env() : {}
     const tabId = input.tabId
-    const approval: ApprovalMode = input.approval || this.settings.chatApproval
+    const approval: ApprovalMode = this.settings.chatApproval
     const model = input.model?.trim() || this.settings.chatModel || undefined
     const agent = new OmpAgent({
       ompPath,
@@ -220,7 +217,6 @@ export class SessionManager {
       host,
       cwd: this.settings.workspacePath,
       model,
-      thinking: input.thinking,
       approval,
       mode: 'rpc-ui',
       ephemeral: false,
@@ -233,7 +229,7 @@ export class SessionManager {
       originLabel: () => this.sessions.get(tabId)?.title || 'Session',
       onEvent: (event) => this.emit(tabId, event)
     })
-    const session: RuntimeSession = { tabId, title: input.title || 'New session', agent, starting: Promise.resolve() }
+    const session: RuntimeSession = { tabId, title: input.title || DEFAULT_SESSION_TITLE, agent, starting: Promise.resolve() }
     session.starting = (async () => {
       await agent.start()
       if (input.resumeFile) {
@@ -254,7 +250,7 @@ export class SessionManager {
     if (!text.trim()) throw new Error('Type a message before sending.')
     const agent = await this.ready(tabId)
     const session = this.get(tabId)
-    if (session.title === 'New session') session.title = text.replace(/\s+/g, ' ').slice(0, 48)
+    if (session.title === DEFAULT_SESSION_TITLE) session.title = titleFromText(text)
     await agent.prompt(text, behavior)
   }
 

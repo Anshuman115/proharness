@@ -51,7 +51,6 @@ const api: ProHarnessApi = {
 
   goals: {
     list: () => ipcRenderer.invoke(CH.goalsList),
-    init: () => ipcRenderer.invoke(CH.goalsInit),
     create: (title) => ipcRenderer.invoke(CH.goalsCreate, title),
     read: (goalId) => ipcRenderer.invoke(CH.goalsRead, goalId),
     toggleTask: (goalId, taskId, checked) => ipcRenderer.invoke(CH.goalsToggleTask, goalId, taskId, checked),

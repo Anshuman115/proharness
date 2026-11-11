@@ -13,6 +13,7 @@ import {
   Square,
   Wrench
 } from 'lucide-react'
+import { isLoopLive, LOOP_LIMITS } from '@shared/defaults'
 import { APPROVAL_MODES, type ApprovalMode, type LoopConfig } from '@shared/types'
 import { useAppStore } from '../store'
 import { approvalHint, approvalLabel, formatClock, formatCost, shortModel, stepLabel } from '../lib/format'
@@ -46,7 +47,7 @@ export function LoopPanel(): React.JSX.Element {
   const [starting, setStarting] = useState(false)
   const [showForm, setShowForm] = useState(false)
 
-  const active = ['running', 'paused', 'stopping'].includes(loop.status)
+  const active = isLoopLive(loop.status)
   const goal = goals.find((item) => item.id === goalId)
   const committed = loop.completed.filter((record) => record.status === 'committed')
   const total = committed.length + loop.queue.length + (loop.currentTask && loop.status !== 'complete' ? 1 : 0)
@@ -313,15 +314,22 @@ export function LoopPanel(): React.JSX.Element {
         <div className="field-row">
           <div className="field">
             <label htmlFor="loop-max">Tasks this run</label>
-            <input id="loop-max" type="number" min={1} max={50} value={maxTasks} onChange={(event) => setMaxTasks(Number(event.target.value))} />
+            <input
+              id="loop-max"
+              type="number"
+              min={LOOP_LIMITS.maxTasks[0]}
+              max={LOOP_LIMITS.maxTasks[1]}
+              value={maxTasks}
+              onChange={(event) => setMaxTasks(Number(event.target.value))}
+            />
           </div>
           <div className="field">
             <label htmlFor="loop-rounds">Revision rounds</label>
             <input
               id="loop-rounds"
               type="number"
-              min={1}
-              max={5}
+              min={LOOP_LIMITS.maxReviewRounds[0]}
+              max={LOOP_LIMITS.maxReviewRounds[1]}
               value={maxReviewRounds}
               onChange={(event) => setMaxReviewRounds(Number(event.target.value))}
             />

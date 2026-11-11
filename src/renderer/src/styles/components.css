@@ -886,12 +886,6 @@
   bottom: auto;
 }
 
-.model-menu--up {
-  top: auto;
-  bottom: calc(100% + 4px);
-  animation-name: pop-in-up;
-}
-
 .model-menu__search {
   display: flex;
   align-items: center;

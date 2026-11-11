@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, ChevronDown, Pin, Search } from 'lucide-react'
+import { providerOf } from '@shared/models'
 import type { ModelInfo } from '@shared/types'
 import { useAppStore } from '../store'
 import { formatTokens, providerLabel, shortModel } from '../lib/format'
@@ -12,7 +13,6 @@ interface Props {
   disabled?: boolean
   compact?: boolean
   align?: 'left' | 'right'
-  placement?: 'up' | 'down'
   ariaLabel?: string
 }
 
@@ -24,7 +24,6 @@ export function ModelPicker({
   disabled,
   compact,
   align = 'left',
-  placement = 'down',
   ariaLabel = 'Model'
 }: Props): React.JSX.Element {
   const omp = useAppStore((state) => state.omp)
@@ -56,7 +55,7 @@ export function ModelPicker({
       list.push({
         model: {
           key: query.trim(),
-          provider: query.trim().split('/')[0],
+          provider: providerOf(query.trim()),
           id: query.trim().split('/').slice(1).join('/'),
           name: `Use "${query.trim()}"`,
           contextWindow: null,
@@ -108,13 +107,13 @@ export function ModelPicker({
         aria-label={ariaLabel}
         title={value || emptyLabel}
       >
-        {value ? <span className={`provider-mark provider-mark--${current?.provider || value.split('/')[0]}`} /> : null}
+        {value ? <span className={`provider-mark provider-mark--${current?.provider || providerOf(value)}`} /> : null}
         <span className="model-picker__label">{label}</span>
-        {!compact && value ? <span className="model-picker__provider">{providerLabel(value.split('/')[0])}</span> : null}
+        {!compact && value ? <span className="model-picker__provider">{providerLabel(providerOf(value))}</span> : null}
         <ChevronDown size={12} />
       </button>
       {open ? (
-        <div className={`model-menu model-menu--${align} model-menu--${placement}`} role="dialog" aria-label="Choose model">
+        <div className={`model-menu model-menu--${align} model-menu--down`} role="dialog" aria-label="Choose model">
           <div className="model-menu__search">
             <Search size={13} />
             <input

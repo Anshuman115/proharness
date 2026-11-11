@@ -7,7 +7,6 @@ import { collect, spawnPiped, type DirEntry, type ExecOptions, type ExecResult, 
 export class LocalHost implements WorkspaceHost {
   readonly kind = 'local' as const
   readonly id = 'local'
-  readonly label = 'This Mac'
   readonly path = posix
 
   async env(): Promise<NodeJS.ProcessEnv> {

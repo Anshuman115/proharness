@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { toolLabel } from '@shared/defaults'
 import type { ConsultEvent, ConsultRequest } from '@shared/types'
 import type { AgentFactory } from './agents'
 import type { GitService } from './git'
@@ -12,7 +13,7 @@ export class ConsultService {
   private emit: (event: ConsultEvent) => void = () => undefined
 
   constructor(
-    private readonly agents: AgentFactory,
+    private readonly agents: Pick<AgentFactory, 'reviewer'>,
     private readonly git: GitService
   ) {}
 
@@ -53,7 +54,7 @@ export class ConsultService {
             this.emit({ type: 'thinking', requestId, text: event.block.text })
           }
           if (event.type === 'block' && event.block.type === 'tool') {
-            this.emit({ type: 'tool', requestId, label: `${event.block.name}${event.block.intent ? ` · ${event.block.intent}` : ''}` })
+            this.emit({ type: 'tool', requestId, label: toolLabel(event.block.name, event.block.intent) })
           }
         }
       })

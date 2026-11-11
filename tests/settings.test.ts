@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -76,6 +76,15 @@ describe('SettingsService defaults and migration', () => {
     expect(pub.pinnedModels).toEqual(DEFAULT_PINNED)
   })
 
+  it('keeps an unparseable settings file as .corrupt before saving defaults', () => {
+    const original = '{ this is not json'
+    writeFileSync(file, original)
+    service()
+    expect(existsSync(`${file}.corrupt`)).toBe(true)
+    expect(readFileSync(`${file}.corrupt`, 'utf8')).toBe(original)
+    expect(existsSync(file)).toBe(false)
+  })
+
   it('turns flat pre-v3 model fields into the local prefs', () => {
     writeStored({
       chatModel: 'anthropic/claude-opus-5-5',
@@ -120,8 +129,8 @@ describe('SettingsService defaults and migration', () => {
     const pub = service().publicSettings()
     expect(pub.chatApproval).toBe('write')
     expect(pub.loopApproval).toBe('yolo')
-    expect(pub.shareLoginHosts).toEqual(['devbox', 'build'])
     expect(service().sharesLogins('devbox')).toBe(true)
+    expect(service().sharesLogins('build')).toBe(true)
     expect(service().sharesLogins('local')).toBe(false)
   })
 
@@ -162,21 +171,15 @@ describe('SettingsService writes', () => {
     expect(reloaded.prefsFor('devbox').chatModel).toBe('vendor/remote-model')
   })
 
-  it('names the workspace and points goalsPath at goals/', () => {
+  it('names the workspace after the folder and the host', () => {
     const settings = service()
     const localDir = join(root, 'my-project')
     mkdirSync(localDir)
     settings.setWorkspace({ host: 'local', path: localDir })
-    const local = settings.publicSettings()
-    expect(local.workspaceName).toBe('my-project')
-    expect(local.goalsPath.endsWith('/goals')).toBe(true)
-    expect(local.goalsPath).toBe(join(localDir, 'goals'))
+    expect(settings.publicSettings().workspaceName).toBe('my-project')
 
     settings.setWorkspace({ host: 'devbox', path: '/srv/app' })
-    const remote = settings.publicSettings()
-    expect(remote.workspaceName).toBe('app @ devbox')
-    expect(remote.goalsPath).toBe('/srv/app/goals')
-    expect(remote.goalsPath.endsWith('/goals')).toBe(true)
+    expect(settings.publicSettings().workspaceName).toBe('app @ devbox')
   })
 
   it('toggles shared logins for remote hosts only', () => {
@@ -184,13 +187,12 @@ describe('SettingsService writes', () => {
     expect(() => settings.setShareLogins('local', true)).toThrow()
     expect(settings.sharesLogins('devbox')).toBe(false)
 
-    expect(settings.setShareLogins('devbox', true).shareLoginHosts).toEqual(['devbox'])
+    settings.setShareLogins('devbox', true)
     expect(settings.sharesLogins('devbox')).toBe(true)
     expect(service().sharesLogins('devbox')).toBe(true)
 
     settings.setShareLogins('devbox', false)
     expect(settings.sharesLogins('devbox')).toBe(false)
-    expect(settings.publicSettings().shareLoginHosts).toEqual([])
   })
 
   it('writes the settings file with mode 0600', () => {

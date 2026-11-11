@@ -40,7 +40,6 @@ interface OmpAgentOptions {
   ephemeral: boolean
   tools?: string[]
   noExtensions?: boolean
-  noSkills?: boolean
   configOverlays?: string[]
   appendSystemPrompt?: string
   hostTools?: HostTool[]
@@ -65,7 +64,7 @@ const DIALOG_METHODS = new Set(['select', 'confirm', 'input', 'editor'])
  * session events and serves host tools and dialogs.
  */
 export class OmpAgent {
-  readonly rpc: OmpRpc
+  private readonly rpc: OmpRpc
   private dialogs = new Map<string, { brokerId: string; controller: AbortController }>()
   private hostCalls = new Map<string, AbortController>()
   private turnWaiters = new Map<string, (result: { status: TurnResult['status']; error: string | null }) => void>()
@@ -82,7 +81,6 @@ export class OmpAgent {
     if (options.ephemeral) args.push('--no-session')
     if (options.tools) args.push('--tools', options.tools.join(','))
     if (options.noExtensions) args.push('--no-extensions')
-    if (options.noSkills) args.push('--no-skills')
     for (const overlay of options.configOverlays || []) args.push('--config', overlay)
     if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt)
     const remote = options.host?.kind === 'ssh' ? options.host : null
@@ -163,7 +161,7 @@ export class OmpAgent {
   async runTurn(text: string, signal: AbortSignal): Promise<TurnResult> {
     const costBefore = this.costUsd
     this.lastText = ''
-    const request = this.rpc.request({ type: 'prompt', message: text }, 120_000)
+    const request = this.rpc.request({ type: 'prompt', message: text })
     const finished = new Promise<{ status: TurnResult['status']; error: string | null }>((resolve) => {
       this.turnWaiters.set(request.id, resolve)
     })

@@ -23,9 +23,9 @@ describe('diff parser', () => {
   })
 
   it('caps very large diffs', () => {
-    const diff = ['@@ -1,1 +1,1 @@', ...Array.from({ length: 30 }, (_, i) => `+line ${i}`)].join('\n')
-    const parsed = parseDiff(diff, 10)
+    const diff = ['@@ -1,1 +1,1 @@', ...Array.from({ length: 3100 }, (_, i) => `+line ${i}`)].join('\n')
+    const parsed = parseDiff(diff)
     expect(parsed.truncated).toBe(true)
-    expect(parsed.lines).toHaveLength(10)
+    expect(parsed.lines).toHaveLength(3000)
   })
 })

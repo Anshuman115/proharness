@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { DEFAULT_SESSION_TITLE, emptyLoopState, titleFromText } from '@shared/defaults'
 import type {
   ApprovalMode,
   ConsultEvent,
@@ -41,7 +42,6 @@ export interface ChatTab {
   status: SessionStatus
   approval: ApprovalMode
   messages: ChatMessage[]
-  createdAt: number
   snapshot: SessionSnapshot | null
   commands: SlashCommand[]
   error: string | null
@@ -63,31 +63,8 @@ interface ConsultState {
 }
 
 interface Toast {
-  id: number
   kind: 'success' | 'error' | 'info'
   message: string
-}
-
-function blankLoop(): LoopState {
-  return {
-    runId: null,
-    status: 'idle',
-    goalId: null,
-    goalTitle: null,
-    config: null,
-    currentTask: null,
-    currentStep: 'idle',
-    queue: [],
-    completed: [],
-    log: [],
-    liveOutput: '',
-    liveTool: null,
-    startedAt: null,
-    finishedAt: null,
-    error: null,
-    review: null,
-    costUsd: 0
-  }
 }
 
 function makeId(prefix: string): string {
@@ -223,7 +200,7 @@ interface AppStore {
   setWorkspaceOpen: (open: boolean) => void
   openWorkspace: (ref: WorkspaceRef) => Promise<void>
   /** Clears tabs and reloads after the host's omp processes were restarted. */
-  resetAfterHostChange: () => Promise<void>
+  resetWorkspace: () => Promise<void>
   setSettingsOpen: (open: boolean) => void
   pushToast: (kind: Toast['kind'], message: string) => void
   clearToast: () => void
@@ -258,7 +235,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     omp: null,
     goals: [],
     git: null,
-    appVersion: '0.2.0',
+    appVersion: '',
     tabs: [],
     activeTabId: null,
     drafts: {},
@@ -278,7 +255,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     diff: null,
     diffLoading: false,
     consults: [],
-    loop: blankLoop(),
+    loop: emptyLoopState(),
     settingsOpen: false,
     workspaceOpen: false,
     toast: null,
@@ -363,11 +340,10 @@ export const useAppStore = create<AppStore>((set, get) => {
       const id = makeId('tab')
       const tab: ChatTab = {
         id,
-        title: options?.title || 'New session',
+        title: options?.title || DEFAULT_SESSION_TITLE,
         status: 'starting',
         approval: settings.chatApproval,
         messages: [],
-        createdAt: Date.now(),
         snapshot: null,
         commands: [],
         error: null
@@ -417,9 +393,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       const tab = get().tabs.find((item) => item.id === tabId)
       if (!tab) return
       set((state) => ({ drafts: { ...state.drafts, [tabId]: '' } }))
-      if (tab.title === 'New session' && !text.startsWith('/')) {
-        const title = text.replace(/\s+/g, ' ').slice(0, 48)
-        patchTab(tabId, (item) => ({ ...item, title }))
+      if (tab.title === DEFAULT_SESSION_TITLE && !text.startsWith('/')) {
+        patchTab(tabId, (item) => ({ ...item, title: titleFromText(text) }))
       }
       try {
         await window.proharness.sessions.send(tabId, text, behavior)
@@ -458,7 +433,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     newConversation: async (tabId) => {
       try {
         await window.proharness.sessions.newConversation(tabId)
-        patchTab(tabId, (tab) => ({ ...tab, title: 'New session', messages: [] }))
+        patchTab(tabId, (tab) => ({ ...tab, title: DEFAULT_SESSION_TITLE, messages: [] }))
       } catch (error) {
         get().pushToast('error', (error as Error).message)
       }
@@ -669,15 +644,13 @@ export const useAppStore = create<AppStore>((set, get) => {
       }
     },
 
-    resetAfterHostChange: async () => {
-      await resetWorkspaceState()
-    },
+    resetWorkspace: resetWorkspaceState,
 
     setSettingsOpen: (open) => set({ settingsOpen: open }),
 
     pushToast: (kind, message) => {
       if (toastTimer) window.clearTimeout(toastTimer)
-      set({ toast: { id: Date.now(), kind, message } })
+      set({ toast: { kind, message } })
       toastTimer = window.setTimeout(() => set({ toast: null }), 5200)
     },
 

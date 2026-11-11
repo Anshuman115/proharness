@@ -8,6 +8,9 @@ import { EventEmitter } from 'node:events'
 
 export type Frame = Record<string, unknown> & { type: string }
 
+/** Rejects `request()` calls that receive no response within this window. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
+
 interface RpcSpawnOptions {
   command: string
   args: string[]
@@ -15,8 +18,6 @@ interface RpcSpawnOptions {
   env: NodeJS.ProcessEnv
   /** Spawns the child another way, e.g. through ssh. Overrides command/args/cwd/env. */
   spawnChild?: () => ChildProcessWithoutNullStreams
-  /** Rejects `request()` calls that receive no response within this window. */
-  requestTimeoutMs?: number
 }
 
 interface Pending {
@@ -120,11 +121,9 @@ export class OmpRpc extends EventEmitter {
   private resolveReady!: () => void
   private rejectReady!: (error: Error) => void
   private exited = false
-  readonly requestTimeoutMs: number
 
   constructor(private readonly options: RpcSpawnOptions) {
     super()
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 120_000
     this.readyPromise = new Promise((resolve, reject) => {
       this.resolveReady = resolve
       this.rejectReady = reject
@@ -248,7 +247,7 @@ export class OmpRpc extends EventEmitter {
   /** Sends a command and resolves with its `data` payload. */
   request<T = unknown>(
     command: Record<string, unknown> & { type: string },
-    timeoutMs = this.requestTimeoutMs
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS
   ): Promise<T> & { id: string } {
     const id = typeof command.id === 'string' ? command.id : this.nextId()
     let pendingRef: Pending | null = null

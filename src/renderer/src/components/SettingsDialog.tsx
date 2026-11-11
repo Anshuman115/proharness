@@ -288,7 +288,7 @@ function LoginShareField({ host }: { host: string }): React.JSX.Element {
       const result = await window.proharness.loginShare.set(next)
       setStatus(result.status)
       useAppStore.setState({ settings: result.settings })
-      await useAppStore.getState().resetAfterHostChange()
+      await useAppStore.getState().resetWorkspace()
       pushToast('success', next ? `${host} now uses this Mac's logins.` : `${host} uses its own logins again.`)
     } catch (error) {
       pushToast('error', (error as Error).message)

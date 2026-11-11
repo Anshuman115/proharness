@@ -200,13 +200,6 @@ export function registerIpc(deps: IpcDependencies): void {
   })
 
   ipcMain.handle(CH.goalsList, () => plan.listGoals())
-  ipcMain.handle(CH.goalsInit, async () => {
-    await plan.ensureRoot()
-    plan.resetWatching()
-    const { tracked } = await git.excludeGoals()
-    send(CH.goalsChanged, await plan.listGoals())
-    return { root: plan.goalsRoot, tracked }
-  })
   ipcMain.handle(CH.goalsCreate, async (_event, title: string) => {
     const summary = await plan.createGoal(title)
     await git.excludeGoals()

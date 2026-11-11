@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { FrameDecoder, LineSplitter } from '../src/main/omp/rpc'
 import { commandsFromFrame, historyFromMessages, parseApproval, snapshotFromState, toBlock } from '../src/main/omp/translate'
-import { sameModel, parseReview } from '../src/main/services/review'
+import { parseReview } from '../src/main/services/review'
+import { sameModel } from '../src/shared/models'
 import { sessionDirFor } from '../src/main/services/sessions'
 
 describe('omp translation', () => {

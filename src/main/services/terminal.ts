@@ -199,7 +199,7 @@ export class TerminalService {
       try {
         session.child.kill('SIGTERM')
         setTimeout(() => {
-          if (!session.child?.killed) session.child?.kill('SIGKILL')
+          if (session.child?.exitCode === null && session.child?.signalCode === null) session.child?.kill('SIGKILL')
         }, 800).unref()
       } catch {
         // Already gone.

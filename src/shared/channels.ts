@@ -12,7 +12,6 @@ export const CH = {
   ompChanged: 'omp:changed',
   settingsChanged: 'settings:changed',
   goalsList: 'goals:list',
-  goalsInit: 'goals:init',
   goalsCreate: 'goals:create',
   goalsRead: 'goals:read',
   goalsToggleTask: 'goals:toggle-task',

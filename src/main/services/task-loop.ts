@@ -10,10 +10,12 @@ import type {
   TaskRef,
   Verdict
 } from '@shared/types'
+import { emptyLoopState, isLoopLive, LOOP_LIMITS, toolLabel } from '@shared/defaults'
+import { sameModel } from '@shared/models'
 import type { TurnResult } from '../omp/agent'
 import type { GitService } from './git'
 import type { PlanService } from './plan'
-import { buildReviewPrompt, parseReview, REVIEWER_SYSTEM, sameModel } from './review'
+import { buildReviewPrompt, parseReview } from './review'
 
 const TASK_TIMEOUT_MS = 30 * 60_000
 const REVIEW_TIMEOUT_MS = 15 * 60_000
@@ -30,28 +32,6 @@ export interface LoopAgentFactory {
   reviewer(options: { model: string; label: string; onEvent: (event: SessionEvent) => void }): Promise<LoopAgent>
   /** omp's configured default model, used when the implementer model is blank. */
   defaultModel(): string | null
-}
-
-function emptyState(): LoopState {
-  return {
-    runId: null,
-    status: 'idle',
-    goalId: null,
-    goalTitle: null,
-    config: null,
-    currentTask: null,
-    currentStep: 'idle',
-    queue: [],
-    completed: [],
-    log: [],
-    liveOutput: '',
-    liveTool: null,
-    startedAt: null,
-    finishedAt: null,
-    error: null,
-    review: null,
-    costUsd: 0
-  }
 }
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
@@ -111,7 +91,7 @@ function withTimeout(signal: AbortSignal, ms: number): { signal: AbortSignal; ti
  * then check the task off. goals/ is never committed.
  */
 export class TaskLoopService {
-  private state: LoopState = emptyState()
+  private state: LoopState = emptyLoopState()
   private emit: (event: LoopEvent) => void = () => undefined
   private abortController: AbortController | null = null
   private implementer: LoopAgent | null = null
@@ -127,15 +107,11 @@ export class TaskLoopService {
   }
 
   getState(): LoopState {
-    return this.snapshot()
-  }
-
-  private snapshot(): LoopState {
     return JSON.parse(JSON.stringify(this.state)) as LoopState
   }
 
   private emitState(): void {
-    this.emit({ type: 'state', state: this.snapshot() })
+    this.emit({ type: 'state', state: this.getState() })
   }
 
   private log(level: LoopLogEntry['level'], message: string): void {
@@ -164,7 +140,7 @@ export class TaskLoopService {
       // Thinking deltas share the stream; only surface visible text.
       this.appendOutput(event.text)
     } else if (event.type === 'block' && event.block.type === 'tool') {
-      const label = `${event.block.name}${event.block.intent ? ` · ${event.block.intent}` : ''}`
+      const label = toolLabel(event.block.name, event.block.intent)
       this.state.liveTool = label
       this.emit({ type: 'tool', label })
     } else if (event.type === 'message_start') {
@@ -175,7 +151,7 @@ export class TaskLoopService {
   }
 
   async start(config: LoopConfig): Promise<LoopState> {
-    if (['running', 'paused', 'stopping'].includes(this.state.status)) {
+    if (isLoopLive(this.state.status)) {
       throw new Error('A task loop is already active. Stop it before starting another.')
     }
     const implementerModel = config.implementerModel.trim() || this.agents.defaultModel() || ''
@@ -199,12 +175,12 @@ export class TaskLoopService {
       ...config,
       implementerModel,
       reviewerModel,
-      maxTasks: clamp(config.maxTasks, 1, 50),
-      maxReviewRounds: clamp(config.maxReviewRounds, 1, 5),
-      pauseBetweenMs: clamp(config.pauseBetweenMs, 0, 60_000)
+      maxTasks: clamp(config.maxTasks, ...LOOP_LIMITS.maxTasks),
+      maxReviewRounds: clamp(config.maxReviewRounds, ...LOOP_LIMITS.maxReviewRounds),
+      pauseBetweenMs: clamp(config.pauseBetweenMs, ...LOOP_LIMITS.pauseBetweenMs)
     }
 
-    this.state = emptyState()
+    this.state = emptyLoopState()
     this.state.runId = randomUUID()
     this.state.status = 'running'
     this.state.goalId = goal.id
@@ -225,29 +201,29 @@ export class TaskLoopService {
     }
     this.emitState()
     void this.run(normalized)
-    return this.snapshot()
+    return this.getState()
   }
 
   async pause(): Promise<LoopState> {
-    if (this.state.status !== 'running') return this.snapshot()
+    if (this.state.status !== 'running') return this.getState()
     this.state.status = 'paused'
     this.log('info', 'Pausing after the current step.')
-    return this.snapshot()
+    return this.getState()
   }
 
   async resume(): Promise<LoopState> {
-    if (this.state.status !== 'paused') return this.snapshot()
+    if (this.state.status !== 'paused') return this.getState()
     this.state.status = 'running'
     this.log('info', 'Resuming.')
-    return this.snapshot()
+    return this.getState()
   }
 
   async stop(): Promise<LoopState> {
-    if (!['running', 'paused', 'stopping'].includes(this.state.status)) return this.snapshot()
+    if (!isLoopLive(this.state.status)) return this.getState()
     this.state.status = 'stopping'
     this.log('warn', 'Stopping: interrupting the current step.')
     this.abortController?.abort()
-    return this.snapshot()
+    return this.getState()
   }
 
   private async checkpoint(signal: AbortSignal): Promise<void> {
@@ -330,15 +306,15 @@ export class TaskLoopService {
   ): Promise<{ verdict: Verdict; notes: string }> {
     const { summary, diff, truncated } = await this.git.reviewDiff()
     if (!summary.files.length) throw new Error('The implementer produced no code changes outside goals/.')
-    this.setStep(record.attempts > 1 ? 'reviewing' : 'reviewing')
+    this.setStep('reviewing')
     this.log('info', `Reviewing ${summary.files.length} changed file(s) with ${config.reviewerModel}.`)
-    const prompt = `${REVIEWER_SYSTEM}\n\n${buildReviewPrompt({
+    const prompt = buildReviewPrompt({
       goal: { id: goal.id, title: goal.title },
       task,
       design: goal.design,
       diff,
       diffTruncated: truncated
-    })}`
+    })
     this.state.liveOutput = ''
     const reviewer = await this.agents.reviewer({
       model: config.reviewerModel,

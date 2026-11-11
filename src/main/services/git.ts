@@ -1,3 +1,4 @@
+import { PLAN_DIR } from '@shared/defaults'
 import type { GitChangeStatus, GitFileChange, GitFileDiff, GitSummary } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
 
@@ -10,8 +11,6 @@ interface GitResult {
 const MAX_DIFF_CHARS = 700_000
 const MAX_DIFF_LINES = 9_000
 const MAX_REVIEW_DIFF_CHARS = 180_000
-/** Local planning state; never shown as a change and never committed. */
-const PLAN_DIR = 'goals'
 const PLAN_EXCLUDE = `:(exclude)${PLAN_DIR}`
 /** git's well-known empty tree; diffs against it before the first commit. */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
@@ -316,7 +315,7 @@ export class GitService {
     return { excluded: true, tracked: Boolean(tracked.stdout.trim()) }
   }
 
-  async head(): Promise<string | null> {
+  private async head(): Promise<string | null> {
     try {
       const result = await this.git(['rev-parse', '--short', 'HEAD'])
       return result.stdout.trim() || null

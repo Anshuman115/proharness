@@ -1,4 +1,5 @@
 import { basename } from 'node:path'
+import { DESIGN_FILE, PLAN_DIR, PLAN_FILE } from '@shared/defaults'
 import type {
   GoalDetail,
   GoalSummary,
@@ -151,7 +152,7 @@ function parsePhases(plan: string): PlanPhase[] {
     })
   })
 
-  if (phases.length === 0) phases.push(pushPhase('Tasks'))
+  if (phases.length === 0) pushPhase('Tasks')
 
   for (const phase of phases) {
     phase.total = phase.tasks.length
@@ -216,7 +217,7 @@ export class PlanService {
   ) {}
 
   get goalsRoot(): string {
-    return this.host().path.join(this.workspace(), 'goals')
+    return this.host().path.join(this.workspace(), PLAN_DIR)
   }
 
   async ensureRoot(): Promise<void> {
@@ -268,7 +269,7 @@ export class PlanService {
     const dir = host.path.join(this.goalsRoot, id)
     await host.mkdirp(dir)
     await host.writeText(
-      host.path.join(dir, 'DESIGN.md'),
+      host.path.join(dir, DESIGN_FILE),
       [
         '---',
         'status: draft',
@@ -289,7 +290,7 @@ export class PlanService {
       ].join('\n')
     )
     await host.writeText(
-      host.path.join(dir, 'PLAN.md'),
+      host.path.join(dir, PLAN_FILE),
       [`# ${clean} — plan`, '', '## Phase 1 — Foundation', '', '- [ ] **1.1** First task', ''].join('\n')
     )
     this.resetWatching()
@@ -299,7 +300,7 @@ export class PlanService {
     return summary
   }
 
-  async ensureGoal(goalId: string): Promise<string> {
+  private async ensureGoal(goalId: string): Promise<string> {
     if (!GOAL_ID_RE.test(goalId)) throw new Error('Invalid goal id.')
     const host = this.host()
     const dir = host.path.resolve(this.goalsRoot, goalId)
@@ -313,12 +314,8 @@ export class PlanService {
 
   async listGoals(): Promise<GoalSummary[]> {
     const host = this.host()
-    let entries
-    try {
-      entries = await host.readdir(this.goalsRoot)
-    } catch {
-      return []
-    }
+    if (!(await host.stat(this.goalsRoot))) return []
+    const entries = await host.readdir(this.goalsRoot)
 
     const goals: GoalSummary[] = []
     for (const entry of entries) {
@@ -326,8 +323,8 @@ export class PlanService {
       const id = entry.name
       if (!GOAL_ID_RE.test(id)) continue
       const dir = host.path.join(this.goalsRoot, id)
-      const designPath = host.path.join(dir, 'DESIGN.md')
-      const planPath = host.path.join(dir, 'PLAN.md')
+      const designPath = host.path.join(dir, DESIGN_FILE)
+      const planPath = host.path.join(dir, PLAN_FILE)
       const designInfo = await host.stat(designPath)
       if (!designInfo) continue
       try {
@@ -346,8 +343,8 @@ export class PlanService {
   async readGoal(goalId: string): Promise<GoalDetail> {
     const host = this.host()
     const dir = await this.ensureGoal(goalId)
-    const designPath = host.path.join(dir, 'DESIGN.md')
-    const planPath = host.path.join(dir, 'PLAN.md')
+    const designPath = host.path.join(dir, DESIGN_FILE)
+    const planPath = host.path.join(dir, PLAN_FILE)
     const designInfo = await host.stat(designPath)
     if (!designInfo) throw new Error(`Goal "${goalId}" has no DESIGN.md.`)
     const design = await host.readText(designPath)
@@ -383,7 +380,7 @@ export class PlanService {
 
   private async writePlan(goalId: string, content: string): Promise<void> {
     const dir = await this.ensureGoal(goalId)
-    const target = this.host().path.join(dir, 'PLAN.md')
+    const target = this.host().path.join(dir, PLAN_FILE)
     await this.host().writeText(target, content)
     this.emitChanged()
   }

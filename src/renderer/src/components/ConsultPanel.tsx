@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUpRight, Brain, Copy, GitCompare, Loader2, Send, Square, Wrench } from 'lucide-react'
+import { providerOf } from '@shared/models'
 import { useAppStore } from '../store'
 import { formatCost, shortModel } from '../lib/format'
 import { Markdown } from './Markdown'
@@ -92,7 +93,7 @@ export function ConsultPanel(): React.JSX.Element {
         <div className="consult-output">
           <div className="consult-output__head">
             <span className="eyebrow">
-              <span className={`provider-mark provider-mark--${current.model.split('/')[0]}`} /> {shortModel(current.model)}
+              <span className={`provider-mark provider-mark--${providerOf(current.model)}`} /> {shortModel(current.model)}
               {current.costUsd ? ` · ${formatCost(current.costUsd)}` : ''}
             </span>
             {current.done && current.text ? (

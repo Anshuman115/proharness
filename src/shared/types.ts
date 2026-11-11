@@ -77,7 +77,6 @@ export interface PublicSettings {
   workspacePath: string
   workspaceHost: string
   workspaceName: string
-  goalsPath: string
   recentWorkspaces: WorkspaceRef[]
   ompPath: string
   /** Effective models for the active host, already checked against its catalog. */
@@ -87,17 +86,13 @@ export interface PublicSettings {
   reviewerModel: string
   /** Why a saved model was replaced on this host, if it was. */
   modelNotes: string[]
-  /** SSH hosts that use this Mac's omp logins through a tunnelled auth broker. */
-  shareLoginHosts: string[]
   loopApproval: ApprovalMode
   pinnedModels: string[]
   terminalShell: string
   reduceMotion: boolean
 }
 
-export type SettingsPatch = Partial<
-  Omit<PublicSettings, 'workspaceName' | 'goalsPath' | 'recentWorkspaces' | 'modelNotes' | 'shareLoginHosts'>
->
+export type SettingsPatch = Partial<Omit<PublicSettings, 'workspaceName' | 'recentWorkspaces' | 'modelNotes'>>
 
 export interface Bootstrap {
   settings: PublicSettings
@@ -248,8 +243,6 @@ export interface SessionCreateInput {
   tabId: string
   title: string
   model?: string
-  thinking?: ThinkingLevel
-  approval?: ApprovalMode
   /** Resume an existing omp session file. */
   resumeFile?: string
 }

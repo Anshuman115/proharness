@@ -20,6 +20,7 @@ import {
   X,
   XCircle
 } from 'lucide-react'
+import { providerOf } from '@shared/models'
 import { THINKING_LEVELS, type ContentBlock, type ThinkingLevel, type ToolBlock } from '@shared/types'
 import { useAppStore, type ChatMessage, type ChatTab } from '../store'
 import { Markdown } from './Markdown'
@@ -367,7 +368,7 @@ function MessageRow({ message }: { message: ChatMessage }): React.JSX.Element | 
   return (
     <article className="message message--assistant">
       <div className="message__meta">
-        <span className={`provider-mark provider-mark--${message.model?.split('/')[0] || 'default'}`} />
+        <span className={`provider-mark provider-mark--${providerOf(message.model || '') || 'default'}`} />
         <span className="message__author">{shortModel(message.model)}</span>
         <span>{formatClock(message.createdAt)}</span>
         {message.costUsd ? <span className="mono">{formatCost(message.costUsd)}</span> : null}

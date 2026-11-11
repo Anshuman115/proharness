@@ -1,3 +1,5 @@
+const DIFF_LINE_LIMIT = 3000
+
 type DiffLineKind = 'add' | 'del' | 'context' | 'hunk' | 'meta'
 
 interface DiffLine {
@@ -7,7 +9,7 @@ interface DiffLine {
   newNo: number | null
 }
 
-export function parseDiff(diff: string, limit = 3000): { lines: DiffLine[]; truncated: boolean } {
+export function parseDiff(diff: string): { lines: DiffLine[]; truncated: boolean } {
   const raw = diff.split(/\r?\n/)
   const lines: DiffLine[] = []
   let oldNo: number | null = null
@@ -15,7 +17,7 @@ export function parseDiff(diff: string, limit = 3000): { lines: DiffLine[]; trun
   const hunkRe = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
 
   for (const text of raw) {
-    if (lines.length >= limit) return { lines, truncated: true }
+    if (lines.length >= DIFF_LINE_LIMIT) return { lines, truncated: true }
     const hunk = text.match(hunkRe)
     if (hunk) {
       oldNo = Number(hunk[1])
