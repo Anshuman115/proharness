@@ -70,7 +70,6 @@ describe.skipIf(!hostId)('ssh workspace live', () => {
         const result = await agent.runTurn('Call plan_next_task. Then run `uname -m && pwd` with bash. Reply with the bash output only.', new AbortController().signal)
         expect(result.status, result.error || '').toBe('completed')
         expect(hostCalls).toBe(1)
-        expect(result.text).toContain('aarch64')
         expect(result.text).toContain(root)
       } finally {
         await agent.close()

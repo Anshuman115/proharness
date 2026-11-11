@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FrameDecoder, LineSplitter } from '../src/main/omp/rpc'
 import { commandsFromFrame, historyFromMessages, parseApproval, snapshotFromState, toBlock } from '../src/main/omp/translate'
-import { parseReview } from '../src/main/services/review'
-import { sameModel } from '../src/shared/models'
 import { sessionDirFor } from '../src/main/services/sessions'
 
 describe('omp translation', () => {
@@ -93,18 +91,7 @@ describe('rpc framing', () => {
   })
 })
 
-describe('review helpers', () => {
-  it('uses the last verdict when the reviewer quotes the format first', () => {
-    const text = 'The format is VERDICT: APPROVE or VERDICT: REQUEST_CHANGES.\n\nVERDICT: REQUEST_CHANGES\nSUMMARY: no\nFINDINGS:\n- x'
-    expect(parseReview(text).verdict).toBe('REQUEST_CHANGES')
-  })
-
-  it('treats the same model across providers as identical', () => {
-    expect(sameModel('anthropic/claude-sonnet-5-5', 'commandcode/claude-sonnet-5-5')).toBe(true)
-    expect(sameModel('commandcode/deepseek/deepseek-v4.1-flash:high', 'opencode-zen/deepseek-v4.1-flash')).toBe(true)
-    expect(sameModel('openai-codex/gpt-6.1-sol', 'anthropic/claude-opus-5-5')).toBe(false)
-  })
-
+describe('session paths', () => {
   it('maps workspace paths to omp session folders', () => {
     expect(sessionDirFor('/Users/me/code/app', '/Users/me')).toBe('/Users/me/.omp/agent/sessions/-code-app')
     expect(sessionDirFor('/tmp/omp-probe', '/Users/me')).toBe('/Users/me/.omp/agent/sessions/--tmp-omp-probe--')

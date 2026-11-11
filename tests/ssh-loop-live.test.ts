@@ -15,6 +15,8 @@ import { join } from 'node:path'
 
 /** Runs a one-task loop on an SSH host. Opt in with PROHARNESS_SSH_HOST=<alias>. */
 const hostId = process.env.PROHARNESS_SSH_HOST || ''
+const implementerModel = process.env.PROHARNESS_SSH_LOOP_IMPLEMENTER || 'commandcode/deepseek/deepseek-v4.1-flash'
+const reviewerModel = process.env.PROHARNESS_SSH_LOOP_REVIEWER || 'commandcode/claude-sonnet-5-5'
 
 describe.skipIf(!hostId)('ssh loop live', () => {
   it('implements, reviews and commits on the remote host', async () => {
@@ -43,8 +45,8 @@ describe.skipIf(!hostId)('ssh loop live', () => {
     try {
       await loop.start({
         goalId: 'demo',
-        implementerModel: 'commandcode/deepseek/deepseek-v4.1-flash',
-        reviewerModel: 'commandcode/claude-sonnet-5-5',
+        implementerModel,
+        reviewerModel,
         approval: 'yolo',
         maxTasks: 1,
         maxReviewRounds: 2,

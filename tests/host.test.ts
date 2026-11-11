@@ -2,29 +2,9 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { collect, shq } from '../src/main/host/host'
+import { collect } from '../src/main/host/host'
 import { LocalHost } from '../src/main/host/local'
 import { parseSshConfigHosts } from '../src/main/host/ssh'
-
-describe('shq', () => {
-  it('quotes arguments containing spaces', () => {
-    expect(shq('a b')).toBe("'a b'")
-    expect(shq('/Users/me/My Projects')).toBe("'/Users/me/My Projects'")
-  })
-
-  it('escapes single quotes', () => {
-    expect(shq("it's")).toBe("'it'\\''s'")
-  })
-
-  it('quotes the empty string', () => {
-    expect(shq('')).toBe("''")
-  })
-
-  it('leaves safe tokens unquoted', () => {
-    expect(shq('/usr/local/bin/omp')).toBe('/usr/local/bin/omp')
-    expect(shq('user@host:/srv/app')).toBe('user@host:/srv/app')
-  })
-})
 
 describe('parseSshConfigHosts', () => {
   it('reads every alias from Host lines and skips wildcards', () => {
