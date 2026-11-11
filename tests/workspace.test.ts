@@ -153,6 +153,30 @@ describe('WorkspaceService.open', () => {
     expect(onGit).toHaveBeenCalledTimes(1)
   })
 
+  it('pushes the not-a-repo summary when git fails during an open', async () => {
+    const { deps, git, onGit, onGoals, settings } = makeDeps()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      git.summary.mockRejectedValueOnce(new Error('git: command not found'))
+      await new WorkspaceService(deps).open({ host: 'local', path: '/next' })
+      expect(logged).toHaveBeenCalled()
+    } finally {
+      logged.mockRestore()
+    }
+    expect(settings.workspacePath).toBe('/next')
+    expect(onGoals).toHaveBeenCalledTimes(1)
+    expect(onGit).toHaveBeenCalledWith({
+      isRepo: false,
+      root: null,
+      branch: null,
+      ahead: 0,
+      behind: 0,
+      files: [],
+      clean: true,
+      head: null
+    })
+  })
+
   it('serializes concurrent opens and keeps the last target', async () => {
     const { deps, calls, settings, registry, loop } = makeDeps()
     let release!: () => void
@@ -259,6 +283,22 @@ describe('WorkspaceService.setLoginShare', () => {
     expect(settings.setShareLogins).toHaveBeenCalledWith('devbox', true)
     const order = calls.join(',')
     expect(order.indexOf('loop.drain')).toBeLessThan(order.indexOf('setShareLogins:true'))
+    expect(gate.blocked).toBe(false)
+  })
+
+  it('drains before connecting so an unreachable host rejects after the drain', async () => {
+    const { deps, calls, settings, registry, sessions, gate } = makeDeps()
+    settings.workspaceHost = 'devbox'
+    registry.connect.mockImplementationOnce(async () => {
+      calls.push('connect')
+      throw new Error('ssh: connect timed out')
+    })
+    const service = new WorkspaceService(deps)
+    await expect(service.setLoginShare(true)).rejects.toThrow(/connect timed out/)
+    const order = calls.join(',')
+    expect(order.indexOf('sessions.dispose')).toBeLessThan(order.indexOf('connect'))
+    expect(sessions.dispose).toHaveBeenCalledTimes(1)
+    expect(settings.setShareLogins).not.toHaveBeenCalled()
     expect(gate.blocked).toBe(false)
   })
 

@@ -96,11 +96,22 @@ describe('SettingsService defaults and migration', () => {
     expect(existsSync(file)).toBe(false)
   })
 
-  it('propagates a read failure instead of moving the settings file aside', () => {
+  it('boots with defaults and moves an unreadable settings file aside', () => {
+    const original = '{ this is not json'
     mkdirSync(file)
-    expect(() => service()).toThrow()
-    expect(existsSync(file)).toBe(true)
-    expect(existsSync(`${file}.corrupt`)).toBe(false)
+    writeFileSync(join(file, 'keep.txt'), original)
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const settings = service()
+      expect(settings.workspaceHost).toBe('local')
+      expect(settings.publicSettings()).toMatchObject({ chatApproval: 'write', loopApproval: 'yolo' })
+      expect(logged).toHaveBeenCalled()
+    } finally {
+      logged.mockRestore()
+    }
+    expect(existsSync(file)).toBe(false)
+    expect(statSync(`${file}.corrupt`).isDirectory()).toBe(true)
+    expect(readFileSync(join(`${file}.corrupt`, 'keep.txt'), 'utf8')).toBe(original)
   })
 
   it('turns flat pre-v3 model fields into the local prefs', () => {

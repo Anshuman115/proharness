@@ -71,7 +71,8 @@ function readJson<T>(file: string): JsonRead<T> {
     raw = readFileSync(file, 'utf8')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'missing' }
-    throw error
+    console.error(`Could not read ${file}:`, error)
+    return { status: 'invalid' }
   }
   try {
     const value = JSON.parse(raw) as T

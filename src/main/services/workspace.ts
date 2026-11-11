@@ -70,7 +70,6 @@ export class WorkspaceService {
     return this.enqueue(async () => {
       const hostId = this.deps.settings.workspaceHost
       if (hostId === 'local') throw new Error('Login sharing applies to SSH workspaces.')
-      const host = await this.deps.registry.connect(hostId)
       this.deps.gate.begin()
       let result = {
         settings: this.deps.settings.publicSettings(),
@@ -78,6 +77,7 @@ export class WorkspaceService {
       }
       try {
         await this.drainAgents()
+        const host = await this.deps.registry.connect(hostId)
         this.deps.settings.setShareLogins(hostId, enabled)
         if (enabled) {
           await this.deps.loginShare.prelude(host)
@@ -117,7 +117,10 @@ export class WorkspaceService {
       this.deps.plan.resetWatching()
       this.deps.git.resetWatching()
       const goals = await this.deps.plan.listGoals()
-      const summary = await this.deps.git.summary()
+      const summary = await this.deps.git.summary().catch((error: unknown) => {
+        console.error('Could not read git status:', error)
+        return { isRepo: false, root: null, branch: null, ahead: 0, behind: 0, files: [], clean: true, head: null }
+      })
       if (this.deps.gate.current() === token) {
         this.deps.onGoals(goals)
         this.deps.onGit(summary)

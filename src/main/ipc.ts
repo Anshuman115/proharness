@@ -222,7 +222,10 @@ export function registerIpc(deps: IpcDependencies): EventSenders {
     bootstrap: async () => ({
       settings: settings.publicSettings(),
       goals: await plan.listGoals(),
-      git: await git.summary(),
+      git: await git.summary().catch((error: unknown) => {
+        console.error('Could not read git status:', error)
+        return { isRepo: false, root: null, branch: null, ahead: 0, behind: 0, files: [], clean: true, head: null }
+      }),
       omp: omp.current(),
       appVersion: deps.appVersion
     })
