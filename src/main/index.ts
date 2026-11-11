@@ -1,7 +1,8 @@
 import { app, BrowserWindow, Menu, session, shell } from 'electron'
 import { join } from 'node:path'
 import { CH } from '@shared/channels'
-import { LocalHost } from './host/local'
+import type { WorkspaceHost } from './host/host'
+import { HostRegistry } from './host/registry'
 import { registerIpc } from './ipc'
 import { shellEnv } from './omp/env'
 import { AgentFactory } from './services/agents'
@@ -42,21 +43,32 @@ if (!gotLock) {
     })
 
     const settings = new SettingsService()
+    const registry = new HostRegistry(() => shellEnv())
+    const activeHost = (): WorkspaceHost => registry.get(settings.workspaceHost)
     const omp = new OmpService(
       () => settings.ompPath,
       () => settings.workspacePath,
-      join(dataDir, 'omp-status.json')
+      join(dataDir, 'omp-status.json'),
+      activeHost
     )
-    const localHost = new LocalHost()
-    const plan = new PlanService(() => localHost, () => settings.workspacePath)
-    const git = new GitService(() => localHost, () => settings.workspacePath)
+    const plan = new PlanService(activeHost, () => settings.workspacePath)
+    const git = new GitService(activeHost, () => settings.workspacePath)
     const broker = new UiBroker()
-    const sessions = new SessionManager(settings, omp, plan, git, broker, dataDir)
-    const agents = new AgentFactory(settings, omp, plan, git, broker, () => sessions.overlayPath)
+    const sessions = new SessionManager(settings, omp, plan, git, broker, dataDir, activeHost)
+    const agents = new AgentFactory(
+      settings,
+      omp,
+      plan,
+      git,
+      broker,
+      (host) => sessions.overlayFor(host),
+      activeHost
+    )
     const consult = new ConsultService(agents, git)
     const terminal = new TerminalService(
       () => settings.workspacePath,
       () => settings.terminalShell,
+      activeHost,
       () => resolvedEnv
     )
     const loop = new TaskLoopService(plan, git, agents)
@@ -84,6 +96,7 @@ if (!gotLock) {
       getWindow: () => mainWindow,
       appVersion: app.getVersion(),
       settings,
+      registry,
       omp,
       plan,
       git,
@@ -117,6 +130,7 @@ if (!gotLock) {
       terminal.dispose()
       plan.dispose()
       git.dispose()
+      registry.dispose()
       await sessions.dispose()
     }
   })

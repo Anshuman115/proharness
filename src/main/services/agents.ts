@@ -1,4 +1,5 @@
 import type { ApprovalMode, SessionEvent } from '@shared/types'
+import type { WorkspaceHost } from '../host/host'
 import { OmpAgent } from '../omp/agent'
 import type { GitService } from './git'
 import { createPlanTools, PLAN_SYSTEM_PROMPT } from './host-tools'
@@ -18,7 +19,8 @@ export class AgentFactory implements LoopAgentFactory {
     private readonly plan: PlanService,
     private readonly git: GitService,
     private readonly broker: UiBroker,
-    private readonly overlay: () => string
+    private readonly overlay: (host: WorkspaceHost) => Promise<string>,
+    private readonly host: () => WorkspaceHost
   ) {}
 
   defaultModel(): string | null {
@@ -31,15 +33,17 @@ export class AgentFactory implements LoopAgentFactory {
     label: string
     onEvent: (event: SessionEvent) => void
   }): Promise<OmpAgent> {
+    const host = this.host()
     return new OmpAgent({
-      ompPath: await this.omp.binary(),
-      env: await this.omp.env(),
+      ompPath: await this.omp.binary(host),
+      env: host.kind === 'local' ? await this.omp.env() : {},
+      host,
       cwd: this.settings.workspacePath,
       model: options.model || undefined,
       approval: options.approval,
       mode: 'rpc',
       ephemeral: false,
-      configOverlays: [this.overlay()],
+      configOverlays: [await this.overlay(host)],
       appendSystemPrompt: PLAN_SYSTEM_PROMPT,
       hostTools: createPlanTools({ plan: this.plan, git: this.git, allowComplete: false }),
       broker: this.broker,
@@ -52,9 +56,11 @@ export class AgentFactory implements LoopAgentFactory {
 
   /** Ephemeral, read-only omp used for reviews and second opinions. */
   async reviewer(options: { model: string; label: string; onEvent: (event: SessionEvent) => void }): Promise<OmpAgent> {
+    const host = this.host()
     return new OmpAgent({
-      ompPath: await this.omp.binary(),
-      env: await this.omp.env(),
+      ompPath: await this.omp.binary(host),
+      env: host.kind === 'local' ? await this.omp.env() : {},
+      host,
       cwd: this.settings.workspacePath,
       model: options.model,
       approval: 'yolo',

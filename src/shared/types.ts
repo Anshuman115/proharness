@@ -38,10 +38,30 @@ export interface SlashCommand {
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
+/** A workspace on this Mac or on an ssh host. */
+export interface WorkspaceRef {
+  /** 'local' or an ssh destination such as 'devbox'. */
+  host: string
+  path: string
+}
+
+export interface WorkspaceDirEntry {
+  name: string
+  isDirectory: boolean
+  isRepo: boolean
+}
+
+export interface WorkspaceListing {
+  path: string
+  entries: WorkspaceDirEntry[]
+}
+
 export interface PublicSettings {
   workspacePath: string
+  workspaceHost: string
   workspaceName: string
   goalsPath: string
+  recentWorkspaces: WorkspaceRef[]
   ompPath: string
   chatModel: string
   chatApproval: ApprovalMode
@@ -53,7 +73,9 @@ export interface PublicSettings {
   reduceMotion: boolean
 }
 
-export type SettingsPatch = Partial<Omit<PublicSettings, 'workspaceName' | 'goalsPath'>>
+export type SettingsPatch = Partial<
+  Omit<PublicSettings, 'workspaceName' | 'goalsPath' | 'recentWorkspaces'>
+>
 
 export interface Bootstrap {
   settings: PublicSettings

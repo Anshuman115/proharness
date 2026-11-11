@@ -13,6 +13,8 @@ export interface RpcSpawnOptions {
   args: string[]
   cwd: string
   env: NodeJS.ProcessEnv
+  /** Spawns the child another way, e.g. through ssh. Overrides command/args/cwd/env. */
+  spawnChild?: () => ChildProcessWithoutNullStreams
   /** Rejects `request()` calls that receive no response within this window. */
   requestTimeoutMs?: number
 }
@@ -141,11 +143,14 @@ export class OmpRpc extends EventEmitter {
 
   start(readyTimeoutMs = 60_000): Promise<void> {
     if (this.child) return this.readyPromise
-    const child = spawn(this.options.command, this.options.args, {
-      cwd: this.options.cwd,
-      env: this.options.env,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    const custom = this.options.spawnChild
+    const child = custom
+      ? custom()
+      : spawn(this.options.command, this.options.args, {
+          cwd: this.options.cwd,
+          env: this.options.env,
+          stdio: ['pipe', 'pipe', 'pipe']
+        })
     this.child = child
     installExitHook()
     liveChildren.add(child)
@@ -166,8 +171,9 @@ export class OmpRpc extends EventEmitter {
     child.on('error', (error) => {
       clearTimeout(readyTimer)
       this.exited = true
+      const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
       const message =
-        (error as NodeJS.ErrnoException).code === 'ENOENT'
+        missing && !custom
           ? `Could not find omp at "${this.options.command}". Install Oh My Pi or set its path in Settings.`
           : error.message
       this.rejectReady(new Error(message))

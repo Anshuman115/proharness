@@ -1,7 +1,20 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { resolve, sep } from 'node:path'
 import { CH } from '@shared/channels'
-import type { ConsultRequest, LoopConfig, SessionCreateInput, SettingsPatch, TerminalCreateInput, ThinkingLevel, UiResponse } from '@shared/types'
+import type {
+  ConsultRequest,
+  LoopConfig,
+  SessionCreateInput,
+  SettingsPatch,
+  TerminalCreateInput,
+  ThinkingLevel,
+  UiResponse,
+  WorkspaceListing,
+  WorkspaceRef
+} from '@shared/types'
+import type { HostRegistry } from './host/registry'
+import type { WorkspaceHost } from './host/host'
+import type { SshHost } from './host/ssh'
 import type { ConsultService } from './services/consult'
 import type { GitService } from './services/git'
 import type { OmpService } from './services/omp'
@@ -16,6 +29,7 @@ export interface IpcDependencies {
   getWindow: () => BrowserWindow | null
   appVersion: string
   settings: SettingsService
+  registry: HostRegistry
   omp: OmpService
   plan: PlanService
   git: GitService
@@ -27,7 +41,7 @@ export interface IpcDependencies {
 }
 
 export function registerIpc(deps: IpcDependencies): void {
-  const { getWindow, settings, omp, plan, git, sessions, broker, terminal, consult, loop } = deps
+  const { getWindow, settings, registry, omp, plan, git, sessions, broker, terminal, consult, loop } = deps
 
   const send = (channel: string, ...args: unknown[]): void => {
     const window = getWindow()
@@ -35,14 +49,25 @@ export function registerIpc(deps: IpcDependencies): void {
   }
 
   const insideWorkspace = (input: string): string => {
+    if (settings.workspaceHost !== 'local') throw new Error('Not available for remote workspaces.')
     const root = resolve(settings.workspacePath)
     const target = resolve(root, input)
     if (target !== root && !target.startsWith(`${root}${sep}`)) throw new Error('Path is outside the workspace.')
     return target
   }
 
-  const onWorkspaceChange = async (previous: string): Promise<void> => {
-    if (previous === settings.workspacePath) return
+  /** Expands `~` and relative paths against the host's home directory. */
+  const expandPath = async (host: WorkspaceHost, input: string): Promise<string> => {
+    const home = host.kind === 'ssh' ? await (host as SshHost).home() : app.getPath('home')
+    const path = input.trim()
+    if (!path) return home
+    if (path === '~') return home
+    if (path.startsWith('~/')) return host.path.join(home, path.slice(2))
+    return host.path.isAbsolute(path) ? path : host.path.join(home, path)
+  }
+
+  const onWorkspaceChange = async (previous: string, previousHost: string): Promise<void> => {
+    if (previous === settings.workspacePath && previousHost === settings.workspaceHost) return
     await loop.stop()
     broker.cancelAll()
     await sessions.dispose()
@@ -70,27 +95,75 @@ export function registerIpc(deps: IpcDependencies): void {
 
   ipcMain.handle(CH.settingsUpdate, async (_event, patch: SettingsPatch) => {
     const previous = settings.workspacePath
+    const previousHost = settings.workspaceHost
     const previousOmp = settings.ompPath
     const next = settings.update(patch)
-    await onWorkspaceChange(previous)
-    if (previousOmp !== settings.ompPath) void omp.refresh()
+    await onWorkspaceChange(previous, previousHost)
+    if (previousOmp !== settings.ompPath || previousHost !== settings.workspaceHost) void omp.refresh()
     return next
   })
 
   ipcMain.handle(CH.settingsChooseWorkspace, async () => {
     const path = await pick({
       title: 'Choose a project folder',
-      defaultPath: settings.workspacePath,
+      defaultPath: settings.workspaceHost === 'local' ? settings.workspacePath : undefined,
       properties: ['openDirectory', 'createDirectory']
     })
     if (!path) return null
     const previous = settings.workspacePath
-    const next = settings.update({ workspacePath: path })
-    await onWorkspaceChange(previous)
+    const previousHost = settings.workspaceHost
+    const next = settings.setWorkspace({ host: 'local', path })
+    await onWorkspaceChange(previous, previousHost)
+    if (previousHost !== 'local') void omp.refresh()
     return next
   })
 
   ipcMain.handle(CH.settingsChooseOmp, () => pick({ title: 'Choose the omp executable', properties: ['openFile'] }))
+
+  ipcMain.handle(CH.workspaceOpen, async (_event, ref: WorkspaceRef) => {
+    const host = await registry.connect(typeof ref?.host === 'string' ? ref.host : 'local')
+    const path = await expandPath(host, typeof ref?.path === 'string' ? ref.path : '')
+    const info = await host.stat(path)
+    if (!info?.isDirectory) throw new Error(`Folder not found on ${host.id}: ${path}`)
+    const resolved = await host.realpath(path)
+    const previous = settings.workspacePath
+    const previousHost = settings.workspaceHost
+    settings.setWorkspace({ host: host.id, path: resolved })
+    await onWorkspaceChange(previous, previousHost)
+    void omp.refresh()
+    return settings.publicSettings()
+  })
+
+  ipcMain.handle(CH.workspaceSshHosts, () => registry.sshHosts())
+
+  ipcMain.handle(CH.workspaceListDir, async (_event, hostId: string, input: string): Promise<WorkspaceListing> => {
+    const host = await registry.connect(typeof hostId === 'string' ? hostId : 'local')
+    let path: string
+    try {
+      path = await host.realpath(await expandPath(host, typeof input === 'string' ? input : ''))
+    } catch {
+      throw new Error(`Folder not found on ${host.id}: ${input}`)
+    }
+    const entries = (await host.readdir(path))
+      .filter((entry) => entry.isDirectory && !entry.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    const repos = new Set<string>()
+    if (host.kind === 'ssh') {
+      const found = await host.exec('find', [path, '-mindepth', '2', '-maxdepth', '2', '-name', '.git'])
+      for (const line of found.stdout.split('\n')) {
+        const repo = line.trim()
+        if (repo) repos.add(host.path.basename(host.path.dirname(repo)))
+      }
+    } else {
+      for (const entry of entries) {
+        if (await host.stat(host.path.join(path, entry.name, '.git'))) repos.add(entry.name)
+      }
+    }
+    return {
+      path,
+      entries: entries.map((entry) => ({ name: entry.name, isDirectory: true, isRepo: repos.has(entry.name) }))
+    }
+  })
 
   ipcMain.handle(CH.ompRefresh, () => omp.refresh())
 

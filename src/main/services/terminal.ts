@@ -9,6 +9,8 @@ import type {
   TerminalDataEvent,
   TerminalExitEvent
 } from '@shared/types'
+import type { WorkspaceHost } from '../host/host'
+import type { SshHost } from '../host/ssh'
 
 const require = createRequire(__filename)
 
@@ -45,6 +47,7 @@ export class TerminalService {
   constructor(
     private readonly workspace: () => string,
     private readonly defaultShell: () => string,
+    private readonly host: () => WorkspaceHost,
     private readonly baseEnv: () => NodeJS.ProcessEnv = () => process.env
   ) {
     try {
@@ -73,16 +76,23 @@ export class TerminalService {
   create(input: TerminalCreateInput): TerminalCreateResult {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(input.id)) throw new Error('Invalid terminal id.')
     if (this.sessions.has(input.id)) this.kill(input.id)
-    const workspace = resolve(this.workspace())
-    const requested = resolve(workspace, input.cwd || '.')
-    if (requested !== workspace && !requested.startsWith(`${workspace}${sep}`)) {
-      throw new Error('The terminal must run inside the current workspace.')
-    }
-    const cwd = requested
-    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) {
+    const host = this.host()
+    const remote = host.kind === 'ssh' ? (host as SshHost) : null
+    const workspace = remote ? host.path.resolve(this.workspace()) : resolve(this.workspace())
+    const requested = remote ? host.path.resolve(workspace, input.cwd || '.') : resolve(workspace, input.cwd || '.')
+    const inside = requested === workspace || requested.startsWith(`${workspace}${remote ? '/' : sep}`)
+    if (!inside) throw new Error('The terminal must run inside the current workspace.')
+    if (!remote && (!existsSync(requested) || !statSync(requested).isDirectory())) {
       throw new Error('Terminal working directory does not exist.')
     }
-    const shell = input.shell || this.defaultShell() || '/bin/bash'
+    const shell = remote ? `ssh ${remote.id}` : input.shell || this.defaultShell() || '/bin/bash'
+    const command = remote ? 'ssh' : shell
+    const ptyArgs = remote
+      ? [...remote.sshArgs(['-tt']), remote.remoteScript('exec "${SHELL:-/bin/bash}" -l', requested)]
+      : ['-l']
+    const pipeArgs = remote ? ptyArgs : ['-i']
+    // A remote cwd does not exist on this Mac; ssh starts from the local cwd.
+    const localCwd = remote ? process.cwd() : requested
     const env = {
       ...this.baseEnv(),
       TERM: 'xterm-256color',
@@ -92,11 +102,11 @@ export class TerminalService {
 
     if (this.ptyModule) {
       try {
-        const pty = this.ptyModule.spawn(shell, ['-l'], {
+        const pty = this.ptyModule.spawn(command, ptyArgs, {
           name: 'xterm-256color',
           cols: Math.max(20, input.cols || 100),
           rows: Math.max(5, input.rows || 30),
-          cwd,
+          cwd: localCwd,
           env
         })
         const session: TerminalSession = {
@@ -116,14 +126,14 @@ export class TerminalService {
           this.sessions.delete(input.id)
           this.emitExit({ id: input.id, exitCode, signal: signal ? String(signal) : null })
         })
-        return { id: input.id, shell, cwd, mode: 'pty', warning: null }
+        return { id: input.id, shell, cwd: requested, mode: 'pty', warning: null }
       } catch (error) {
         this.ptyLoadError = (error as Error).message
       }
     }
 
-    const child = spawn(shell, ['-i'], {
-      cwd,
+    const child = spawn(command, pipeArgs, {
+      cwd: localCwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe']
     })
@@ -156,7 +166,7 @@ export class TerminalService {
     return {
       id: input.id,
       shell,
-      cwd,
+      cwd: requested,
       mode: 'pipe',
       warning: `PTY unavailable (${this.ptyLoadError || 'native module not loaded'}). Running in pipe mode; interactive full-screen programs will not work.`
     }

@@ -31,6 +31,12 @@ const api: ProHarnessApi = {
     chooseOmp: () => ipcRenderer.invoke(CH.settingsChooseOmp)
   },
 
+  workspace: {
+    open: (ref) => ipcRenderer.invoke(CH.workspaceOpen, ref),
+    sshHosts: () => ipcRenderer.invoke(CH.workspaceSshHosts),
+    listDir: (host, path) => ipcRenderer.invoke(CH.workspaceListDir, host, path)
+  },
+
   omp: {
     refresh: () => ipcRenderer.invoke(CH.ompRefresh),
     onChanged: (listener) => subscribe<[OmpStatus]>(CH.ompChanged, listener)

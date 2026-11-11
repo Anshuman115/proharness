@@ -41,8 +41,8 @@ describe.skipIf(!live)('loop live', () => {
     )
 
     const settings = { workspacePath: root } as unknown as SettingsService
-    const omp = new OmpService(() => '', () => root, join(root, '.omp-status.json'))
     const host = new LocalHost()
+    const omp = new OmpService(() => '', () => root, join(root, '.omp-status.json'), () => host)
     const plan = new PlanService(() => host, () => root)
     const gitService = new GitService(() => host, () => root)
     const overlay = writeHostToolOverlay(join(root, '.ph'))
@@ -53,7 +53,7 @@ describe.skipIf(!live)('loop live', () => {
       (request) => broker.respond({ requestId: request.id, value: request.options[0] ?? '' }),
       () => undefined
     )
-    const agents = new AgentFactory(settings, omp, plan, gitService, broker, () => overlay)
+    const agents = new AgentFactory(settings, omp, plan, gitService, broker, async () => overlay, () => host)
     const loop = new TaskLoopService(plan, gitService, agents)
     const log: string[] = []
     loop.setEmitter((event) => {

@@ -22,7 +22,9 @@ import type {
   TerminalExitEvent,
   ThinkingLevel,
   UiRequest,
-  UiResponse
+  UiResponse,
+  WorkspaceListing,
+  WorkspaceRef
 } from './types'
 
 type Unsubscribe = () => void
@@ -34,6 +36,12 @@ export interface ProHarnessApi {
     update(patch: SettingsPatch): Promise<PublicSettings>
     chooseWorkspace(): Promise<PublicSettings | null>
     chooseOmp(): Promise<string | null>
+  }
+
+  workspace: {
+    open(ref: WorkspaceRef): Promise<PublicSettings>
+    sshHosts(): Promise<string[]>
+    listDir(host: string, path: string): Promise<WorkspaceListing>
   }
 
   omp: {
