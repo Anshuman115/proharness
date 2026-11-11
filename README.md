@@ -59,7 +59,7 @@ pnpm dist:mac     # release/ProHarness-<version>-arm64.dmg and -mac.zip
 
 Override with `PROHARNESS_LIVE_MODEL`, `PROHARNESS_LIVE_IMPLEMENTER` and `PROHARNESS_LIVE_REVIEWER` (all `provider/id`).
 
-The packaged app is ad-hoc signed. On first launch, right-click the app and choose Open. To sign with a Developer ID, set `CSC_LINK` and `CSC_KEY_PASSWORD` and remove `identity: null` from `electron-builder.yml`.
+The packaged app is ad-hoc signed. On first launch, right-click the app and choose Open. To sign with a Developer ID, set `CSC_LINK` and `CSC_KEY_PASSWORD`. Then remove the `identity` setting from `electron-builder.yml`.
 
 ## Models
 

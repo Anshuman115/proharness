@@ -25,6 +25,14 @@ Keep host-specific operations behind `WorkspaceHost`.
 Keep IPC types in the shared contract.
 Close processes and watchers when their owner stops.
 
+## Polling
+
+Plan and Git watchers poll the selected workspace.
+A direct `EACCES` or `EPERM` error stops a watcher and drops its queued work.
+A workspace change resets the watcher and tries again.
+Other errors keep retrying.
+Git failures may arrive as generic errors without a direct code.
+
 ## Data and access
 
 Settings and the model cache use the Electron user data folder.

@@ -97,11 +97,16 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-function build(factory: LoopAgentFactory): TaskLoopService {
+function buildWithGit(factory: LoopAgentFactory): { loop: TaskLoopService; git: GitService } {
   const host = new LocalHost()
   const plan = new PlanService(() => host, () => root)
   if (factory instanceof FakeFactory) factory.plan = plan
-  return new TaskLoopService(plan, new GitService(() => host, () => root), factory)
+  const git = new GitService(() => host, () => root)
+  return { loop: new TaskLoopService(plan, git, factory), git }
+}
+
+function build(factory: LoopAgentFactory): TaskLoopService {
+  return buildWithGit(factory).loop
 }
 
 describe('TaskLoopService', () => {
@@ -111,7 +116,7 @@ describe('TaskLoopService', () => {
     await loop.start(config)
     const state = await waitForEnd(loop)
 
-    expect(state.status).toBe('complete')
+    expect(state.status, state.error ?? undefined).toBe('complete')
     expect(state.completed.map((record) => record.status)).toEqual(['committed', 'committed'])
     const plan = readFileSync(join(root, 'goals', 'demo', 'PLAN.md'), 'utf8')
     expect(plan).toContain('- [x] **1.1** First')
@@ -127,6 +132,21 @@ describe('TaskLoopService', () => {
     expect(factory.reviewerModels).toEqual(['openai-codex/gpt-6.1-sol', 'openai-codex/gpt-6.1-sol'])
     expect(git('log', '-1', '--format=%B')).toContain('Reviewed-by: openai-codex/gpt-6.1-sol (APPROVE)')
     expect(state.costUsd).toBeGreaterThan(0)
+  })
+
+  it('completes while a git subscriber is polling', async () => {
+    const factory = new FakeFactory()
+    const { loop, git } = buildWithGit(factory)
+    const unsubscribe = git.onChanged(() => undefined)
+    try {
+      await loop.start({ ...config, maxTasks: 2 })
+      const state = await waitForEnd(loop)
+      expect(state.status, state.error ?? undefined).toBe('complete')
+      expect(state.completed.map((record) => record.status)).toEqual(['committed', 'committed'])
+    } finally {
+      unsubscribe()
+      git.dispose()
+    }
   })
 
   it('sends findings back for revision and then commits', async () => {

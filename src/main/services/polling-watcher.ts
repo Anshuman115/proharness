@@ -7,10 +7,16 @@ export interface PollingWatcherOptions<T> {
   forceNotify: boolean
 }
 
+/** True only for a direct EACCES or EPERM code. */
+function isPermissionDenied(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'EACCES' || code === 'EPERM'
+}
+
 /**
- * Polls a value and notifies listeners when its signature changes. One load
- * runs at a time; poll ticks and notify requests are coalesced behind it, and
- * a reset or dispose makes every in-flight result stale.
+ * Polls a value and notifies listeners when its signature changes.
+ * One load runs at a time. Poll ticks and notify requests wait for it.
+ * A reset or dispose makes every in-flight result stale.
  */
 export class PollingWatcher<T> {
   private readonly listeners = new Set<(value: T) => void>()
@@ -22,6 +28,7 @@ export class PollingWatcher<T> {
   private pendingSeed = false
   private pendingPoll = false
   private pendingNotify = false
+  private blocked = false
 
   constructor(private readonly options: PollingWatcherOptions<T>) {}
 
@@ -34,6 +41,7 @@ export class PollingWatcher<T> {
   }
 
   notify(): void {
+    if (this.blocked || this.listeners.size === 0) return
     if (this.debounce) clearTimeout(this.debounce)
     this.debounce = setTimeout(() => {
       this.debounce = null
@@ -43,6 +51,7 @@ export class PollingWatcher<T> {
   }
 
   reset(): void {
+    this.blocked = false
     this.generation += 1
     this.pendingSeed = false
     this.pendingPoll = false
@@ -55,6 +64,7 @@ export class PollingWatcher<T> {
   }
 
   dispose(): void {
+    this.blocked = false
     this.generation += 1
     this.pendingSeed = false
     this.pendingPoll = false
@@ -65,7 +75,7 @@ export class PollingWatcher<T> {
   }
 
   private startPolling(): void {
-    if (this.poller) return
+    if (this.poller || this.blocked) return
     this.pendingSeed = true
     this.pump()
     this.poller = setInterval(() => {
@@ -80,8 +90,19 @@ export class PollingWatcher<T> {
     this.poller = null
   }
 
+  /** Stops polling after a direct permission failure. Drops queued work. */
+  private stopForPermission(): void {
+    this.blocked = true
+    this.pendingSeed = false
+    this.pendingPoll = false
+    this.pendingNotify = false
+    this.stopPolling()
+    clearTimeout(this.debounce ?? undefined)
+    this.debounce = null
+  }
+
   private pump(): void {
-    if (this.loading) return
+    if (this.blocked || this.loading) return
     const generation = this.generation
     const kind = this.pendingSeed ? 'seed' : this.pendingNotify ? 'notify' : this.pendingPoll ? 'poll' : null
     if (!kind) return
@@ -102,8 +123,9 @@ export class PollingWatcher<T> {
           if (generation !== this.generation) return
           listener(value)
         }
-      } catch {
-        // Keep the previous signature; the next poll or notify retries.
+      } catch (error) {
+        // A permission failure stops polling. Other errors retry on the next tick.
+        if (generation === this.generation && isPermissionDenied(error)) this.stopForPermission()
       }
     })().finally(() => {
       this.loading = null

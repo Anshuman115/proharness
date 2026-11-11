@@ -38,6 +38,13 @@ Run `pnpm dist:mac` to make the Apple silicon DMG and ZIP files.
 The build output uses ad-hoc signing by default.
 Keep signing credentials outside the repository.
 Use the [builder config](<../electron-builder.yml>) for package settings.
+Ad-hoc signing does not provide Apple notarization.
+
+Use a temporary folder outside Documents, Desktop, and Downloads for package tests.
+Keep the test app, workspace, and app settings in that folder.
+Use a separate `--user-data-dir` for the test app.
+Stop the test if macOS repeatedly requests folder access.
+Keep macOS permissions unchanged during automated tests.
 
 ## Before a commit
 

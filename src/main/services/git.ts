@@ -106,7 +106,16 @@ export class GitService {
       // No upstream configured.
     }
 
-    const statusResult = await this.gitOn(target, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', PLAN_EXCLUDE])
+    const statusResult = await this.gitOn(target, [
+      '--no-optional-locks',
+      'status',
+      '--porcelain=v1',
+      '-z',
+      '--untracked-files=all',
+      '--',
+      '.',
+      PLAN_EXCLUDE
+    ])
     const records = statusResult.stdout.split('\0')
     const files: GitFileChange[] = []
     for (let i = 0; i < records.length; i += 1) {
@@ -199,7 +208,7 @@ export class GitService {
     const root = await this.rootOf(target)
     if (!root) throw new Error('The workspace is not a git repository.')
     const absolute = this.safePathFor(target, path, root)
-    const status = await this.gitOn(target, ['status', '--porcelain=v1', '--untracked-files=all', '--', path])
+    const status = await this.gitOn(target, ['--no-optional-locks', 'status', '--porcelain=v1', '--untracked-files=all', '--', path])
     const untracked = status.stdout.startsWith('??')
     let diff = ''
     if (!untracked) {
@@ -279,7 +288,7 @@ export class GitService {
     const root = await this.rootOf(target)
     if (!root) throw new Error('The workspace is not a git repository.')
     this.safePathFor(target, path, root)
-    const status = await this.gitOn(target, ['status', '--porcelain=v1', '--', path])
+    const status = await this.gitOn(target, ['--no-optional-locks', 'status', '--porcelain=v1', '--', path])
     if (!status.stdout) throw new Error('File has no changes to restore.')
     const code = `${status.stdout[0]}${status.stdout[1]}`
     if (code.includes('?') || code === 'A ' || code === 'AM' || code.startsWith('R') || code.startsWith('C')) {

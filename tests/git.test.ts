@@ -3,8 +3,18 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ExecOptions, ExecResult } from '../src/main/host/host'
 import { LocalHost } from '../src/main/host/local'
 import { GitService } from '../src/main/services/git'
+
+class RecordingHost extends LocalHost {
+  readonly calls: Array<{ command: string; args: string[] }> = []
+
+  override async exec(command: string, args: string[], options: ExecOptions = {}): Promise<ExecResult> {
+    this.calls.push({ command, args: [...args] })
+    return super.exec(command, args, options)
+  }
+}
 
 let root = ''
 let service: GitService
@@ -61,6 +71,49 @@ describe('GitService', () => {
     const result = await service.commitAll('test commit')
     expect(result.hash).toMatch(/^[0-9a-f]{7,}$/)
     expect((await service.summary()).clean).toBe(true)
+  })
+
+  it('reads status without optional index locks and preserves normal write locking', async () => {
+    const recording = new RecordingHost()
+    const readOnly = new GitService(() => recording, () => root)
+    try {
+      writeFileSync(join(root, 'hello.txt'), 'one\nTWO\nthree\n')
+      await readOnly.summary()
+      await readOnly.fileDiff('hello.txt')
+      await readOnly.restoreFile('hello.txt')
+      writeFileSync(join(root, 'new.txt'), 'new\n')
+      await readOnly.commitAll('status lock check')
+
+      const statusCalls = recording.calls.filter((call) => call.command === 'git' && call.args.includes('status'))
+      expect(statusCalls.length).toBeGreaterThanOrEqual(3)
+      for (const call of statusCalls) expect(call.args.slice(0, 2)).toEqual(['--no-optional-locks', 'status'])
+
+      const summaryStatus = statusCalls.find((call) => call.args.includes('-z'))
+      expect(summaryStatus?.args).toContain('--untracked-files=all')
+      expect(summaryStatus?.args).toContain(':(exclude)goals')
+
+      const writeCalls = recording.calls.filter(
+        (call) => call.command === 'git' && ['add', 'commit', 'restore'].includes(call.args[0])
+      )
+      expect(writeCalls.length).toBeGreaterThan(0)
+      for (const call of writeCalls) expect(call.args).not.toContain('--no-optional-locks')
+    } finally {
+      readOnly.dispose()
+    }
+  })
+
+  it('reports status and diff while another process holds index.lock', async () => {
+    const lock = join(root, '.git', 'index.lock')
+    writeFileSync(lock, '')
+    try {
+      writeFileSync(join(root, 'hello.txt'), 'one\nTWO\n')
+      const summary = await service.summary()
+      expect(summary.files.find((file) => file.path === 'hello.txt')).toMatchObject({ status: 'modified' })
+      const diff = await service.fileDiff('hello.txt')
+      expect(diff.diff).toContain('+TWO')
+    } finally {
+      rmSync(lock, { force: true })
+    }
   })
 })
 

@@ -33,8 +33,9 @@ mac:
   darkModeSupport: true
   hardenedRuntime: true
   gatekeeperAssess: false
-  # Ad-hoc signed; set CSC_LINK / CSC_KEY_PASSWORD to sign with a Developer ID.
-  identity: null
+  # Ad-hoc signed.
+  # Remove the identity setting and set CSC_LINK and CSC_KEY_PASSWORD to sign with a Developer ID.
+  identity: "-"
   minimumSystemVersion: "13.0"
   artifactName: ProHarness-${version}-${arch}-mac.${ext}
   extendInfo:

@@ -217,4 +217,117 @@ describe('PollingWatcher', () => {
       watcher.dispose()
     }
   })
+
+  it.each(['EACCES', 'EPERM'])('stops polling on a direct %s error until reset', async (code) => {
+    let attempt = 0
+    const load = vi.fn(async () => {
+      attempt += 1
+      if (attempt === 1) throw Object.assign(new Error('denied'), { code })
+      return 'a'
+    })
+    const watcher = makeWatcher({ load, debounceMs: 5 })
+    const listener = vi.fn()
+    const unsubscribe = watcher.subscribe(listener)
+    const second = vi.fn()
+    let unsubscribeSecond = (): void => undefined
+    try {
+      await flush()
+      expect(load).toHaveBeenCalledTimes(1)
+      await flush(10_000)
+      expect(load).toHaveBeenCalledTimes(1)
+
+      watcher.notify()
+      await flush(10)
+      expect(load).toHaveBeenCalledTimes(1)
+
+      unsubscribeSecond = watcher.subscribe(second)
+      await flush(10_000)
+      expect(load).toHaveBeenCalledTimes(1)
+      expect(listener).not.toHaveBeenCalled()
+      expect(second).not.toHaveBeenCalled()
+
+      watcher.reset()
+      await flush()
+      expect(load).toHaveBeenCalledTimes(2)
+    } finally {
+      unsubscribe()
+      unsubscribeSecond()
+      watcher.dispose()
+    }
+  })
+
+  it('keeps retrying when EACCES is only the cause', async () => {
+    let attempt = 0
+    const load = vi.fn(async () => {
+      attempt += 1
+      if (attempt === 1) throw Object.assign(new Error('offline'), { cause: { code: 'EACCES' } })
+      return 'a'
+    })
+    const watcher = makeWatcher({ load })
+    const listener = vi.fn()
+    const unsubscribe = watcher.subscribe(listener)
+    try {
+      await flush()
+      await flush(1_000)
+      expect(load).toHaveBeenCalledTimes(2)
+      expect(listener).toHaveBeenCalledWith('a')
+    } finally {
+      unsubscribe()
+      watcher.dispose()
+    }
+  })
+
+  it('does not load when notify has no subscribers', async () => {
+    const load = vi.fn(async () => 'a')
+    const watcher = makeWatcher({ load, debounceMs: 1 })
+    try {
+      watcher.notify()
+      await flush(10)
+      expect(load).not.toHaveBeenCalled()
+    } finally {
+      watcher.dispose()
+    }
+  })
+
+  it('does not load from notify after the last unsubscribe', async () => {
+    const load = vi.fn(async () => 'a')
+    const watcher = makeWatcher({ load, interval: () => 60_000 })
+    const unsubscribe = watcher.subscribe(() => undefined)
+    try {
+      await flush()
+      expect(load).toHaveBeenCalledTimes(1)
+      unsubscribe()
+      watcher.notify()
+      await flush(10)
+      expect(load).toHaveBeenCalledTimes(1)
+    } finally {
+      watcher.dispose()
+    }
+  })
+
+  it('ignores a stale permission failure after reset', async () => {
+    const attempts: Array<{ resolve: (value: string) => void; reject: (error: unknown) => void }> = []
+    const load = vi.fn(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          attempts.push({ resolve, reject })
+        })
+    )
+    const watcher = makeWatcher({ load })
+    const unsubscribe = watcher.subscribe(() => undefined)
+    try {
+      await flush()
+      expect(load).toHaveBeenCalledTimes(1)
+      watcher.reset()
+      attempts[0].reject(Object.assign(new Error('denied'), { code: 'EACCES' }))
+      await flush()
+      expect(load).toHaveBeenCalledTimes(2)
+      attempts[1].resolve('a')
+      await flush(1_000)
+      expect(load).toHaveBeenCalledTimes(3)
+    } finally {
+      unsubscribe()
+      watcher.dispose()
+    }
+  })
 })

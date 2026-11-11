@@ -5,3 +5,5 @@ allowBuilds:
   '@homebridge/node-pty-prebuilt-multiarch': true
 minimumReleaseAgeExclude:
   - lucide-react@1.71.0
+overrides:
+  'minimatch@>=7.0.0 <11.0.1': '11.0.2'
