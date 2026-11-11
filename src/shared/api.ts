@@ -2,7 +2,6 @@ import type {
   Bootstrap,
   ConsultEvent,
   ConsultRequest,
-  GitCommitInfo,
   GitFileDiff,
   GitSummary,
   GoalDetail,
@@ -69,7 +68,6 @@ export interface ProHarnessApi {
     summary(): Promise<GitSummary>
     fileDiff(path: string): Promise<GitFileDiff>
     restore(path: string): Promise<GitSummary>
-    commits(): Promise<GitCommitInfo[]>
     onChanged(listener: (summary: GitSummary) => void): Unsubscribe
   }
 
@@ -85,7 +83,6 @@ export interface ProHarnessApi {
     compact(tabId: string): Promise<void>
     removeQueued(tabId: string, message: string, queue: 'steering' | 'followUp'): Promise<void>
     recent(): Promise<RecentSession[]>
-    rename(tabId: string, title: string): Promise<void>
     onEvent(listener: (tabId: string, event: SessionEvent) => void): Unsubscribe
   }
 

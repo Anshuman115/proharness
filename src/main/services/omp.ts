@@ -9,7 +9,7 @@ type Json = Record<string, unknown>
 
 const PROBE_ARGS = ['--mode', 'rpc', '--no-session', '--no-extensions', '--no-skills', '--tools', 'read']
 
-export function modelFromJson(raw: Json): ModelInfo | null {
+function modelFromJson(raw: Json): ModelInfo | null {
   if (typeof raw.provider !== 'string' || typeof raw.id !== 'string') return null
   const cost = (raw.cost || {}) as Json
   const thinking = (raw.thinking || {}) as Json

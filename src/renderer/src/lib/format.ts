@@ -2,13 +2,6 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path
 }
 
-export function shortPath(path: string, max = 52): string {
-  if (path.length <= max) return path
-  const parts = path.split(/[\\/]/)
-  if (parts.length <= 2) return `…${path.slice(-max + 1)}`
-  return `${parts[0]}/…/${parts.slice(-2).join('/')}`
-}
-
 export function formatRelative(ts: number | null): string {
   if (!ts) return '—'
   const delta = Date.now() - ts
@@ -30,14 +23,6 @@ export function formatCost(value: number): string {
   if (!value) return '$0.00'
   if (value < 0.01) return `$${value.toFixed(4)}`
   return `$${value.toFixed(2)}`
-}
-
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  const minutes = Math.floor(ms / 60_000)
-  const seconds = Math.round((ms % 60_000) / 1000)
-  return `${minutes}m ${seconds}s`
 }
 
 export function approvalLabel(mode: string): string {
@@ -71,7 +56,7 @@ export function approvalHint(mode: string): string {
 }
 
 /** "anthropic/claude-opus-5-5" -> { provider: "anthropic", id: "claude-opus-5-5" } */
-export function splitModel(key: string | null | undefined): { provider: string; id: string } {
+function splitModel(key: string | null | undefined): { provider: string; id: string } {
   if (!key) return { provider: '', id: '' }
   const index = key.indexOf('/')
   return index > 0 ? { provider: key.slice(0, index), id: key.slice(index + 1) } : { provider: '', id: key }
@@ -150,15 +135,4 @@ export function stepLabel(step: string): string {
     default:
       return 'Idle'
   }
-}
-
-export function statusTone(status: string): 'accent' | 'success' | 'danger' | 'muted' {
-  if (['working', 'starting', 'stopping'].includes(status)) return 'accent'
-  if (status === 'idle') return 'success'
-  if (status === 'error') return 'danger'
-  return 'muted'
-}
-
-export function encodePathForUi(path: string): string {
-  return path.replace(/\\/g, '/')
 }

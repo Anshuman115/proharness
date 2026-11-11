@@ -105,7 +105,6 @@ export interface Bootstrap {
   git: GitSummary
   omp: OmpStatus
   appVersion: string
-  platform: string
 }
 
 // ── Goals / plans ────────────────────────────────────────────────────────────
@@ -193,13 +192,6 @@ export interface GitFileDiff {
   binary: boolean
   untracked: boolean
   truncated: boolean
-}
-
-export interface GitCommitInfo {
-  hash: string
-  subject: string
-  author: string
-  ts: number
 }
 
 // ── Chat sessions ────────────────────────────────────────────────────────────

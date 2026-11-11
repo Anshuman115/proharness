@@ -225,15 +225,6 @@ export class SettingsService {
   get chatApproval(): ApprovalMode {
     return this.settings.chatApproval
   }
-  get implementerModel(): string {
-    return this.effective().implementerModel
-  }
-  get reviewerModel(): string {
-    return this.effective().reviewerModel
-  }
-  get loopApproval(): ApprovalMode {
-    return this.settings.loopApproval
-  }
   get terminalShell(): string {
     return this.settings.terminalShell
   }

@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events'
 
 export type Frame = Record<string, unknown> & { type: string }
 
-export interface RpcSpawnOptions {
+interface RpcSpawnOptions {
   command: string
   args: string[]
   cwd: string
@@ -26,7 +26,7 @@ interface Pending {
   command: string
 }
 
-export class RpcError extends Error {
+class RpcError extends Error {
   constructor(
     message: string,
     readonly command: string,
@@ -129,16 +129,12 @@ export class OmpRpc extends EventEmitter {
       this.resolveReady = resolve
       this.rejectReady = reject
     })
-    // Avoid unhandled rejections when nobody awaits ready().
+    // Avoid unhandled rejections when nobody awaits start().
     this.readyPromise.catch(() => undefined)
   }
 
   get alive(): boolean {
     return Boolean(this.child) && !this.exited
-  }
-
-  get stderr(): string {
-    return this.stderrTail
   }
 
   start(readyTimeoutMs = 60_000): Promise<void> {
@@ -189,10 +185,6 @@ export class OmpRpc extends EventEmitter {
       this.emit('exit', { code, signal, error: code === 0 ? null : reason })
     })
     this.once('ready', () => clearTimeout(readyTimer))
-    return this.readyPromise
-  }
-
-  ready(): Promise<void> {
     return this.readyPromise
   }
 

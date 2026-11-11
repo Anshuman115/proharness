@@ -8,7 +8,7 @@ import type { SshHost } from '../host/ssh'
 /** Where the broker bearer token lives on the remote host (mode 0600). */
 export const REMOTE_TOKEN_PATH = '.omp/agent/secrets/proharness-broker.token'
 /** omp's encrypted snapshot cache on the remote host, separate from any other broker use. */
-export const REMOTE_SNAPSHOT_CACHE = '.cache/proharness/broker-snapshot.enc'
+const REMOTE_SNAPSHOT_CACHE = '.cache/proharness/broker-snapshot.enc'
 
 /**
  * Shell prefix that points a remote omp at the tunnelled broker. The token is
@@ -61,10 +61,6 @@ export class LoginShare {
     private readonly ompPath: () => Promise<string>,
     private readonly env: () => Promise<NodeJS.ProcessEnv>
   ) {}
-
-  get brokerPort(): number {
-    return this.port
-  }
 
   /** Starts the broker once and resolves with its port. */
   ensureBroker(): Promise<number> {

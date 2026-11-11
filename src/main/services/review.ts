@@ -1,6 +1,6 @@
 import type { GoalDetail, TaskRef, Verdict } from '@shared/types'
 
-export interface ReviewVerdict {
+interface ReviewVerdict {
   verdict: Verdict
   summary: string
   notes: string

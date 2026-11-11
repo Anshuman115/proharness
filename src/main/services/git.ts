@@ -1,4 +1,4 @@
-import type { GitChangeStatus, GitCommitInfo, GitFileChange, GitFileDiff, GitSummary } from '@shared/types'
+import type { GitChangeStatus, GitFileChange, GitFileDiff, GitSummary } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
 
 interface GitResult {
@@ -314,21 +314,6 @@ export class GitService {
     }
     const tracked = await this.git(['ls-files', '--', PLAN_DIR], [0])
     return { excluded: true, tracked: Boolean(tracked.stdout.trim()) }
-  }
-
-  async recentCommits(limit = 12): Promise<GitCommitInfo[]> {
-    try {
-      const result = await this.git(['log', `-${limit}`, '--format=%h%x1f%s%x1f%an%x1f%ct'])
-      return result.stdout
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => {
-          const [hash, subject, author, ts] = line.split('\x1f')
-          return { hash, subject, author, ts: Number(ts) * 1000 }
-        })
-    } catch {
-      return []
-    }
   }
 
   async head(): Promise<string | null> {

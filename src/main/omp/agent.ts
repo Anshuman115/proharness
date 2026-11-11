@@ -26,7 +26,7 @@ export interface HostTool {
   run: (args: Record<string, unknown>, signal: AbortSignal) => Promise<string>
 }
 
-export interface OmpAgentOptions {
+interface OmpAgentOptions {
   ompPath: string
   env: NodeJS.ProcessEnv
   /** Where omp runs. SSH hosts spawn it over ssh in `cwd`. */
@@ -109,16 +109,8 @@ export class OmpAgent {
     })
   }
 
-  get isWorking(): boolean {
-    return this.working
-  }
-
   get alive(): boolean {
     return this.rpc.alive && !this.closed
-  }
-
-  get totalCost(): number {
-    return this.costUsd
   }
 
   private emit(event: SessionEvent): void {

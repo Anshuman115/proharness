@@ -75,8 +75,4 @@ export class UiBroker {
   cancelAll(): void {
     for (const id of [...this.pending.keys()]) this.cancel(id)
   }
-
-  list(): UiRequest[] {
-    return [...this.pending.values()].map((pending) => pending.request)
-  }
 }

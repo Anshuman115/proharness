@@ -10,7 +10,7 @@ import type { LoopAgentFactory } from './task-loop'
 import type { UiBroker } from './ui-broker'
 
 /** Read-only tool set for reviewers and consults. */
-export const READ_ONLY_TOOLS = ['read', 'grep', 'glob']
+const READ_ONLY_TOOLS = ['read', 'grep', 'glob']
 
 export class AgentFactory implements LoopAgentFactory {
   constructor(

@@ -62,7 +62,6 @@ const api: ProHarnessApi = {
     summary: () => ipcRenderer.invoke(CH.gitSummary),
     fileDiff: (path) => ipcRenderer.invoke(CH.gitDiff, path),
     restore: (path) => ipcRenderer.invoke(CH.gitRestore, path),
-    commits: () => ipcRenderer.invoke(CH.gitCommits),
     onChanged: (listener) => subscribe<[GitSummary]>(CH.gitChanged, listener)
   },
 
@@ -78,7 +77,6 @@ const api: ProHarnessApi = {
     compact: (tabId) => ipcRenderer.invoke(CH.sessionCompact, tabId),
     removeQueued: (tabId, message, queue) => ipcRenderer.invoke(CH.sessionRemoveQueued, tabId, message, queue),
     recent: () => ipcRenderer.invoke(CH.sessionRecent),
-    rename: (tabId, title) => ipcRenderer.invoke(CH.sessionRename, tabId, title),
     onEvent: (listener) => subscribe<[string, SessionEvent]>(CH.sessionEvent, listener)
   },
 

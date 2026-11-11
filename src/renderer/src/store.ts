@@ -49,7 +49,7 @@ export interface ChatTab {
 
 export type WorkbenchTab = 'changes' | 'terminal' | 'consult' | 'loop'
 
-export interface ConsultState {
+interface ConsultState {
   requestId: string
   model: string
   prompt: string
@@ -64,11 +64,11 @@ export interface ConsultState {
 
 interface Toast {
   id: number
-  kind: 'success' | 'error' | 'info' | 'warning'
+  kind: 'success' | 'error' | 'info'
   message: string
 }
 
-export function blankLoop(): LoopState {
+function blankLoop(): LoopState {
   return {
     runId: null,
     status: 'idle',
@@ -148,8 +148,7 @@ function settle(tab: ChatTab): ChatTab {
   return { ...tab, messages: tab.messages.map((message) => (message.streaming ? { ...message, streaming: false } : message)) }
 }
 
-
-export interface AppStore {
+interface AppStore {
   loading: boolean
   bootError: string | null
   settings: PublicSettings | null
@@ -157,7 +156,6 @@ export interface AppStore {
   goals: GoalSummary[]
   git: GitSummary | null
   appVersion: string
-  platform: string
 
   tabs: ChatTab[]
   activeTabId: string | null
@@ -261,7 +259,6 @@ export const useAppStore = create<AppStore>((set, get) => {
     goals: [],
     git: null,
     appVersion: '0.2.0',
-    platform: '',
     tabs: [],
     activeTabId: null,
     drafts: {},
@@ -295,7 +292,6 @@ export const useAppStore = create<AppStore>((set, get) => {
           git: boot.git,
           omp: boot.omp,
           appVersion: boot.appVersion,
-          platform: boot.platform,
           loading: false
         })
         set({ loop: await window.proharness.loop.state() })

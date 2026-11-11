@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, posix } from 'node:path'
 import type { ApprovalMode, RecentSession, SessionCreateInput, SessionEvent, ThinkingLevel } from '@shared/types'
@@ -63,7 +63,7 @@ export function sessionDirFor(cwd: string, home = homedir()): string {
 }
 
 /** Reads the cwd recorded in an omp session file header. */
-export async function sessionCwd(host: WorkspaceHost, file: string): Promise<string | null> {
+async function sessionCwd(host: WorkspaceHost, file: string): Promise<string | null> {
   let head: string
   try {
     head = await readHead(host, file, 16 * 1024)
@@ -106,7 +106,7 @@ async function readHead(host: WorkspaceHost, file: string, bytes: number): Promi
   return result.stdout
 }
 
-export async function listRecentSessions(host: WorkspaceHost, cwd: string, limit = 25): Promise<RecentSession[]> {
+async function listRecentSessions(host: WorkspaceHost, cwd: string, limit = 25): Promise<RecentSession[]> {
   const home = host.kind === 'ssh' ? await (host as SshHost).home() : homedir()
   const dir = sessionDirFor(cwd, home)
   let entries: DirEntry[]
@@ -298,11 +298,6 @@ export class SessionManager {
     return listRecentSessions(this.host(), this.settings.workspacePath)
   }
 
-  rename(tabId: string, title: string): void {
-    const session = this.sessions.get(tabId)
-    if (session && title.trim()) session.title = title.trim().slice(0, 80)
-  }
-
   async close(tabId: string): Promise<void> {
     const session = this.sessions.get(tabId)
     if (!session) return
@@ -315,13 +310,5 @@ export class SessionManager {
     const all = [...this.sessions.values()]
     this.sessions.clear()
     await Promise.all(all.map((session) => session.agent.close()))
-  }
-}
-
-export function readFileSafe(path: string): string {
-  try {
-    return readFileSync(path, 'utf8')
-  } catch {
-    return ''
   }
 }

@@ -65,14 +65,6 @@ export class TerminalService {
     this.emitExit = onExit
   }
 
-  get available(): boolean {
-    return Boolean(this.ptyModule)
-  }
-
-  get loadError(): string | null {
-    return this.ptyLoadError
-  }
-
   create(input: TerminalCreateInput): TerminalCreateResult {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(input.id)) throw new Error('Invalid terminal id.')
     if (this.sessions.has(input.id)) this.kill(input.id)

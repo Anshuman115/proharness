@@ -27,7 +27,7 @@ import type { TaskLoopService } from './services/task-loop'
 import type { TerminalService } from './services/terminal'
 import type { UiBroker } from './services/ui-broker'
 
-export interface IpcDependencies {
+interface IpcDependencies {
   getWindow: () => BrowserWindow | null
   appVersion: string
   settings: SettingsService
@@ -93,8 +93,7 @@ export function registerIpc(deps: IpcDependencies): void {
     goals: await plan.listGoals(),
     git: await git.summary(),
     omp: omp.current(),
-    appVersion: deps.appVersion,
-    platform: process.platform
+    appVersion: deps.appVersion
   }))
 
   ipcMain.handle(CH.settingsUpdate, async (_event, patch: SettingsPatch) => {
@@ -223,7 +222,6 @@ export function registerIpc(deps: IpcDependencies): void {
 
   ipcMain.handle(CH.gitSummary, () => git.summary())
   ipcMain.handle(CH.gitDiff, (_event, path: string) => git.fileDiff(path))
-  ipcMain.handle(CH.gitCommits, () => git.recentCommits())
   ipcMain.handle(CH.gitRestore, async (_event, path: string) => {
     const summary = await git.restoreFile(path)
     send(CH.gitChanged, summary)
@@ -245,7 +243,6 @@ export function registerIpc(deps: IpcDependencies): void {
     sessions.removeQueued(tabId, message, queue)
   )
   ipcMain.handle(CH.sessionRecent, () => sessions.recent())
-  ipcMain.handle(CH.sessionRename, (_event, tabId: string, title: string) => sessions.rename(tabId, title))
 
   ipcMain.handle(CH.uiResponse, (_event, response: UiResponse) => broker.respond(response))
 

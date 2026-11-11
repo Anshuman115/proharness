@@ -694,8 +694,7 @@ select:focus-visible {
   background: var(--color-success);
 }
 
-.status-dot--error,
-.status-dot--failed {
+.status-dot--error {
   background: var(--color-danger);
 }
 

@@ -1,7 +1,7 @@
 import type { HostModelPrefs, ModelInfo } from './types'
 
 /** Default choices per role, tried in order until one exists on the host. */
-export const ROLE_PREFERENCES = {
+const ROLE_PREFERENCES = {
   chat: [] as string[],
   implementer: [] as string[],
   reviewer: [
@@ -27,21 +27,21 @@ export const DEFAULT_PINNED = [
   'commandcode/deepseek/deepseek-v4.1-flash'
 ]
 
-export type ModelRole = 'chat' | 'implementer' | 'reviewer'
+type ModelRole = 'chat' | 'implementer' | 'reviewer'
 
 /** `provider/id:effort` → `provider/id` */
-export function stripEffort(key: string): string {
+function stripEffort(key: string): string {
   return key.replace(/:(off|minimal|low|medium|high|xhigh|max|auto)$/i, '')
 }
 
 /** The model id without its provider, used to find the same model elsewhere. */
-export function modelTail(key: string): string {
+function modelTail(key: string): string {
   const bare = stripEffort(key)
   const slash = bare.indexOf('/')
   return slash >= 0 ? bare.slice(slash + 1) : bare
 }
 
-export interface Resolution {
+interface Resolution {
   /** Model to use; '' means "omp default" (only allowed for chat and implementer). */
   model: string
   /** Set when the saved choice was unavailable and something else was picked. */

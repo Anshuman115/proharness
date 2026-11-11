@@ -53,8 +53,7 @@
   border-color: var(--color-warning-line);
 }
 
-.loop-pill--error,
-.loop-pill--failed {
+.loop-pill--error {
   border-color: var(--color-danger-line);
   color: var(--color-danger);
 }
@@ -87,9 +86,7 @@
 }
 
 .loop-pill--error .status-dot,
-.loop-pill--failed .status-dot,
-.loop-state--error .status-dot,
-.loop-state--failed .status-dot {
+.loop-state--error .status-dot {
   background: var(--color-danger);
 }
 
@@ -2719,8 +2716,7 @@
   white-space: nowrap;
 }
 
-.loop-state--error strong,
-.loop-state--failed strong {
+.loop-state--error strong {
   color: var(--color-danger);
 }
 
@@ -3824,14 +3820,6 @@ textarea.request-card__input {
 
 .toast--error > svg {
   color: var(--color-danger);
-}
-
-.toast--warning {
-  border-color: var(--color-warning-line);
-}
-
-.toast--warning > svg {
-  color: var(--color-warning);
 }
 
 .toast--info > svg {
