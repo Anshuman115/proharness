@@ -52,6 +52,7 @@ describe('SettingsService defaults and migration', () => {
   it('falls back to defaults when the file is missing', () => {
     const settings = service()
     expect(settings.workspaceHost).toBe('local')
+    expect(existsSync(`${file}.corrupt`)).toBe(false)
     expect(settings.publicSettings()).toMatchObject({
       workspaceHost: 'local',
       chatApproval: 'write',
@@ -83,6 +84,23 @@ describe('SettingsService defaults and migration', () => {
     expect(existsSync(`${file}.corrupt`)).toBe(true)
     expect(readFileSync(`${file}.corrupt`, 'utf8')).toBe(original)
     expect(existsSync(file)).toBe(false)
+  })
+
+  it('does not replace an earlier corrupt backup', () => {
+    const original = '{ this is not json'
+    writeFileSync(`${file}.corrupt`, 'older backup')
+    writeFileSync(file, original)
+    service()
+    expect(readFileSync(`${file}.corrupt`, 'utf8')).toBe('older backup')
+    expect(readFileSync(`${file}.corrupt-2`, 'utf8')).toBe(original)
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('propagates a read failure instead of moving the settings file aside', () => {
+    mkdirSync(file)
+    expect(() => service()).toThrow()
+    expect(existsSync(file)).toBe(true)
+    expect(existsSync(`${file}.corrupt`)).toBe(false)
   })
 
   it('turns flat pre-v3 model fields into the local prefs', () => {

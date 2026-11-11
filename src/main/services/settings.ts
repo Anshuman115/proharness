@@ -60,11 +60,25 @@ function migratePins(value: unknown, defaults: string[]): string[] {
   return untouched ? defaults : pins
 }
 
-function readJson<T>(file: string): T | null {
+type JsonRead<T> =
+  | { status: 'ok'; value: T }
+  | { status: 'missing' }
+  | { status: 'invalid' }
+
+function readJson<T>(file: string): JsonRead<T> {
+  let raw: string
   try {
-    return JSON.parse(readFileSync(file, 'utf8')) as T
+    raw = readFileSync(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'missing' }
+    throw error
+  }
+  try {
+    const value = JSON.parse(raw) as T
+    if (!value || typeof value !== 'object') return { status: 'invalid' }
+    return { status: 'ok', value }
   } catch {
-    return null
+    return { status: 'invalid' }
   }
 }
 
@@ -121,18 +135,13 @@ export class SettingsService {
 
   private load(): StoredSettings {
     const defaults = this.defaults()
-    const stored = readJson<Record<string, unknown>>(this.filePath)
-    if (!stored) {
-      if (existsSync(this.filePath)) {
-        // Keep the unreadable file for the user instead of overwriting it on the next save.
-        try {
-          renameSync(this.filePath, `${this.filePath}.corrupt`)
-        } catch {
-          // Best effort.
-        }
-      }
+    const read = readJson<Record<string, unknown>>(this.filePath)
+    if (read.status === 'missing') return defaults
+    if (read.status === 'invalid') {
+      this.preserveCorrupt()
       return defaults
     }
+    const stored = read.value
     const workspaceHost =
       typeof stored.workspaceHost === 'string' && stored.workspaceHost.trim()
         ? stored.workspaceHost.trim()
@@ -161,6 +170,17 @@ export class SettingsService {
       pinnedModels: migratePins(stored.pinnedModels, defaults.pinnedModels),
       terminalShell: typeof stored.terminalShell === 'string' && stored.terminalShell ? stored.terminalShell : defaults.terminalShell,
       reduceMotion: Boolean(stored.reduceMotion)
+    }
+  }
+
+  /** Keeps an unparseable settings file without replacing an earlier backup. */
+  private preserveCorrupt(): void {
+    let target = `${this.filePath}.corrupt`
+    for (let n = 2; existsSync(target); n += 1) target = `${this.filePath}.corrupt-${n}`
+    try {
+      renameSync(this.filePath, target)
+    } catch {
+      // Best effort.
     }
   }
 
