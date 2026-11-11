@@ -10,7 +10,7 @@ export class HostRegistry {
   readonly local: LocalHost
   private readonly ssh = new Map<string, SshHost>()
 
-  constructor(private readonly localEnv: () => Promise<NodeJS.ProcessEnv>) {
+  constructor() {
     this.local = new LocalHost()
   }
 
@@ -19,7 +19,7 @@ export class HostRegistry {
     if (name === 'local') return this.local
     let host = this.ssh.get(name)
     if (!host) {
-      host = new SshHost(name, this.localEnv)
+      host = new SshHost(name)
       this.ssh.set(name, host)
     }
     return host
@@ -27,7 +27,7 @@ export class HostRegistry {
 
   async connect(id: string): Promise<WorkspaceHost> {
     const host = this.get(id)
-    if (host.kind === 'ssh') await (host as SshHost).connect()
+    await host.connect()
     return host
   }
 
@@ -45,6 +45,5 @@ export class HostRegistry {
   dispose(): void {
     for (const host of this.ssh.values()) host.dispose()
     this.ssh.clear()
-    this.local.dispose()
   }
 }

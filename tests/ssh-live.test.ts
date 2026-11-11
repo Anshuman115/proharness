@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '../src/shared/types'
 import { OmpAgent } from '../src/main/omp/agent'
-import { shellEnv } from '../src/main/omp/env'
 import { HostRegistry } from '../src/main/host/registry'
 import type { SshHost } from '../src/main/host/ssh'
 import { GitService } from '../src/main/services/git'
+import { OmpService } from '../src/main/services/omp'
 import { PlanService } from '../src/main/services/plan'
 import { UiBroker } from '../src/main/services/ui-broker'
 
@@ -17,7 +17,7 @@ const model = process.env.PROHARNESS_SSH_MODEL || 'commandcode/deepseek/deepseek
 
 describe.skipIf(!hostId)('ssh workspace live', () => {
   it('reads git and plans, and runs an omp turn on the remote host', async () => {
-    const registry = new HostRegistry(shellEnv)
+    const registry = new HostRegistry()
     const host = (await registry.connect(hostId)) as SshHost
     const home = await host.home()
     const root = `${home}/.cache/proharness-live-${Date.now()}`
@@ -38,17 +38,15 @@ describe.skipIf(!hostId)('ssh workspace live', () => {
       broker.setEmitters((request) => broker.respond({ requestId: request.id, value: request.options[0] ?? '' }), () => undefined)
       const events: SessionEvent[] = []
       let hostCalls = 0
+      const omp = new OmpService(() => '', () => root, `${home}/.cache/proharness-live-status-${Date.now()}.json`, () => host)
       const agent = new OmpAgent({
-        ompPath: '~/.local/bin/omp'.replace('~', home),
-        env: {},
-        cwd: root,
+        spawn: await omp.spawner(host),
         model,
         approval: 'yolo',
         mode: 'rpc',
         ephemeral: true,
         tools: ['read', 'bash'],
         noExtensions: true,
-        host,
         hostTools: [
           {
             name: 'plan_next_task',

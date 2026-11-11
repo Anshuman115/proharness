@@ -3,7 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { LoginShareStatus } from '@shared/types'
+import type { WorkspaceHost } from '../host/host'
 import type { SshHost } from '../host/ssh'
+import { shellEnv } from '../omp/env'
 
 /** Where the broker bearer token lives on the remote host (mode 0600). */
 export const REMOTE_TOKEN_PATH = '.omp/agent/secrets/proharness-broker.token'
@@ -54,12 +57,14 @@ export class LoginShare {
   private broker: ChildProcess | null = null
   private port = 0
   private starting: Promise<number> | null = null
+  private attaching = new Map<string, Promise<number>>()
   private forwarded = new Map<string, number>()
+  private errors = new Map<string, string>()
   private log = ''
 
   constructor(
     private readonly ompPath: () => Promise<string>,
-    private readonly env: () => Promise<NodeJS.ProcessEnv>
+    private readonly enabled: (hostId: string) => boolean
   ) {}
 
   /** Starts the broker once and resolves with its port. */
@@ -75,14 +80,23 @@ export class LoginShare {
   private async startBroker(): Promise<number> {
     const port = await freePort()
     const child = spawn(await this.ompPath(), ['auth-broker', 'serve', `--bind=127.0.0.1:${port}`], {
-      env: await this.env(),
+      env: await shellEnv(),
       stdio: ['ignore', 'pipe', 'pipe']
     })
+    const state: { failure: Error | null } = { failure: null }
     const capture = (chunk: Buffer): void => {
       this.log = `${this.log}${chunk.toString('utf8')}`.slice(-4000)
     }
     child.stdout?.on('data', capture)
     child.stderr?.on('data', capture)
+    child.on('error', (error) => {
+      state.failure = error
+      if (this.broker === child) {
+        this.broker = null
+        this.port = 0
+        this.forwarded.clear()
+      }
+    })
     child.on('exit', () => {
       if (this.broker === child) {
         this.broker = null
@@ -91,23 +105,43 @@ export class LoginShare {
       }
     })
     this.broker = child
+    const brokerError = (): Error | null => state.failure
     for (let i = 0; i < 60; i += 1) {
-      if (child.exitCode !== null) break
+      if (brokerError() || child.exitCode !== null) break
       if (await healthy(port)) {
+        if (brokerError()) break
         this.port = port
         return port
       }
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
-    child.kill()
-    throw new Error(`The omp auth broker did not start. ${this.log.trim().split('\n').pop() || ''}`.trim())
+    if (!brokerError()) {
+      try {
+        child.kill()
+      } catch {
+        // Already gone.
+      }
+    }
+    const detail = brokerError()?.message || this.log.trim().split('\n').pop() || ''
+    throw new Error(`The omp auth broker did not start.${detail ? ` ${detail}` : ''}`.trim())
   }
 
   /**
    * Makes the broker reachable on the host at 127.0.0.1:<port> and installs
    * the bearer token there. Resolves with the remote port.
    */
-  async attach(host: SshHost): Promise<number> {
+  private attach(host: SshHost): Promise<number> {
+    const existing = this.attaching.get(host.id)
+    if (existing) return existing
+    let run: Promise<number>
+    run = this.attachHost(host).finally(() => {
+      if (this.attaching.get(host.id) === run) this.attaching.delete(host.id)
+    })
+    this.attaching.set(host.id, run)
+    return run
+  }
+
+  private async attachHost(host: SshHost): Promise<number> {
     const port = await this.ensureBroker()
     // A reconnected control master drops its forwards, so re-check every time (one fast round trip).
     if (this.forwarded.get(host.id) === port && (await this.remoteHealthy(host, port))) return port
@@ -137,16 +171,49 @@ export class LoginShare {
   async detach(host: SshHost): Promise<void> {
     const port = this.forwarded.get(host.id)
     this.forwarded.delete(host.id)
+    this.errors.delete(host.id)
     if (port) await host.cancelRemote(port, port).catch(() => undefined)
     await host.run(`rm -f "$HOME/${REMOTE_TOKEN_PATH}" "$HOME/${REMOTE_SNAPSHOT_CACHE}"`).catch(() => undefined)
   }
 
-  isAttached(hostId: string): boolean {
+  /**
+   * Attaches login sharing when the host is enabled and returns the shell
+   * prelude for that host. Failures fall back to the host's own logins and
+   * are recorded per host; successful attaches clear the record.
+   */
+  async prelude(host: WorkspaceHost): Promise<string> {
+    if (host.kind !== 'ssh' || !this.enabled(host.id)) {
+      this.errors.delete(host.id)
+      return ''
+    }
+    try {
+      const port = await this.attach(host as SshHost)
+      this.errors.delete(host.id)
+      return brokerEnvScript(port)
+    } catch (error) {
+      this.errors.set(host.id, (error as Error).message)
+      return ''
+    }
+  }
+
+  status(hostId: string): LoginShareStatus {
+    const enabled = this.enabled(hostId)
+    return {
+      hostId,
+      enabled,
+      active: this.isAttached(hostId),
+      error: enabled ? this.errors.get(hostId) ?? null : null
+    }
+  }
+
+  private isAttached(hostId: string): boolean {
     return this.forwarded.has(hostId) && this.forwarded.get(hostId) === this.port
   }
 
   dispose(): void {
     this.forwarded.clear()
+    this.errors.clear()
+    this.attaching.clear()
     this.broker?.kill()
     this.broker = null
     this.port = 0

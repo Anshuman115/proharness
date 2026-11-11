@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
-import { accessSync, constants, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
+import { shq, type WorkspaceHost } from '../host/host'
 
 /**
  * GUI apps on macOS start with launchd's minimal PATH, so `omp`, `git`, and
@@ -71,46 +71,27 @@ export function shellEnv(): Promise<NodeJS.ProcessEnv> {
   return cached
 }
 
-function isExecutable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** Finds the omp binary: explicit setting, then PATH, then common install dirs. */
-export function findOmp(explicit: string, env: NodeJS.ProcessEnv): string | null {
-  if (explicit.trim()) {
+/** Finds the omp binary: explicit setting (local only), then PATH, then common install dirs. */
+export async function findOmp(host: WorkspaceHost, explicit: string): Promise<string | null> {
+  if (host.kind === 'local' && explicit.trim()) {
     const path = explicit.trim().replace(/^~(?=\/)/, homedir())
-    return existsSync(path) ? path : null
+    const check = await host.exec('sh', ['-c', `test -x ${shq(path)}`])
+    return check.code === 0 ? path : null
   }
-  for (const dir of (env.PATH || '').split(delimiter)) {
-    if (!dir) continue
-    const candidate = join(dir, 'omp')
-    if (isExecutable(candidate)) return candidate
-  }
-  for (const candidate of [
-    join(homedir(), '.local', 'bin', 'omp'),
-    join(homedir(), '.bun', 'bin', 'omp'),
-    '/opt/homebrew/bin/omp',
-    '/usr/local/bin/omp'
-  ]) {
-    if (isExecutable(candidate)) return candidate
-  }
-  return null
+  const script = [
+    'command -v omp 2>/dev/null',
+    'for c in "$HOME/.local/bin/omp" "$HOME/.bun/bin/omp" /opt/homebrew/bin/omp /usr/local/bin/omp; do if [ -x "$c" ]; then printf "%s\\n" "$c"; break; fi; done'
+  ].join('; ')
+  const result = await host.exec('sh', ['-c', script])
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean) ?? null
 }
 
-export function ompVersion(path: string, env: NodeJS.ProcessEnv): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(path, ['--version'], { timeout: 20_000, env, encoding: 'utf8' }, (error, stdout) => {
-      if (error) {
-        resolve(null)
-        return
-      }
-      const match = stdout.match(/omp\/([\w.+-]+)/) || stdout.match(/(\d+\.\d+\.\d+[\w.+-]*)/)
-      resolve(match ? match[1] : stdout.trim().slice(0, 40) || null)
-    })
-  })
+export async function ompVersion(host: WorkspaceHost, path: string): Promise<string | null> {
+  const result = await host.exec(path, ['--version'], { timeoutMs: 20_000 }).catch(() => null)
+  if (!result || result.code !== 0) return null
+  const match = result.stdout.match(/omp\/([\w.+-]+)/) || result.stdout.match(/(\d+\.\d+\.\d+[\w.+-]*)/)
+  return match ? match[1] : result.stdout.trim().slice(0, 40) || null
 }

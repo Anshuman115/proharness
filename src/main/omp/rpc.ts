@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 
 /**
@@ -12,12 +12,8 @@ export type Frame = Record<string, unknown> & { type: string }
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
 interface RpcSpawnOptions {
-  command: string
-  args: string[]
-  cwd: string
-  env: NodeJS.ProcessEnv
-  /** Spawns the child another way, e.g. through ssh. Overrides command/args/cwd/env. */
-  spawnChild?: () => ChildProcessWithoutNullStreams
+  /** Spawns the child; may resolve asynchronously. */
+  spawnChild: () => ChildProcessWithoutNullStreams | Promise<ChildProcessWithoutNullStreams>
 }
 
 interface Pending {
@@ -117,6 +113,8 @@ export class OmpRpc extends EventEmitter {
   private splitter = new LineSplitter()
   private decoder = new FrameDecoder()
   private stderrTail = ''
+  private starting: Promise<void> | null = null
+  private closing = false
   private readyPromise: Promise<void>
   private resolveReady!: () => void
   private rejectReady!: (error: Error) => void
@@ -137,15 +135,46 @@ export class OmpRpc extends EventEmitter {
   }
 
   start(readyTimeoutMs = 60_000): Promise<void> {
-    if (this.child) return this.readyPromise
-    const custom = this.options.spawnChild
-    const child = custom
-      ? custom()
-      : spawn(this.options.command, this.options.args, {
-          cwd: this.options.cwd,
-          env: this.options.env,
-          stdio: ['pipe', 'pipe', 'pipe']
-        })
+    if (this.starting) return this.starting
+    if (this.closing) {
+      this.starting = Promise.reject(new Error('omp start was cancelled.'))
+      this.starting.catch(() => undefined)
+      return this.starting
+    }
+    this.starting = this.begin(readyTimeoutMs)
+    return this.starting
+  }
+
+  private async begin(readyTimeoutMs: number): Promise<void> {
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = await this.options.spawnChild()
+    } catch (error) {
+      this.exited = true
+      const message = (error as Error).message
+      this.rejectReady(new Error(message))
+      this.emit('exit', { code: null, signal: null, error: message })
+      throw error
+    }
+    if (this.closing) {
+      installExitHook()
+      this.child = child
+      liveChildren.add(child)
+      child.once('exit', () => {
+        liveChildren.delete(child)
+        this.exited = true
+      })
+      // A spawn error here means the late child will never run; drop it from
+      // the exit hook without emitting 'exit' (the caller asked to close).
+      child.on('error', () => {
+        liveChildren.delete(child)
+        this.exited = true
+      })
+      const error = new Error('omp start was cancelled.')
+      this.rejectReady(error)
+      this.kill()
+      throw error
+    }
     this.child = child
     installExitHook()
     liveChildren.add(child)
@@ -166,14 +195,10 @@ export class OmpRpc extends EventEmitter {
     child.on('error', (error) => {
       clearTimeout(readyTimer)
       this.exited = true
-      const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
-      const message =
-        missing && !custom
-          ? `Could not find omp at "${this.options.command}". Install Oh My Pi or set its path in Settings.`
-          : error.message
-      this.rejectReady(new Error(message))
-      this.failAll(new Error(message))
-      this.emit('exit', { code: null, signal: null, error: message })
+      liveChildren.delete(child)
+      this.rejectReady(new Error(error.message))
+      this.failAll(new Error(error.message))
+      this.emit('exit', { code: null, signal: null, error: error.message })
     })
     child.on('exit', (code, signal) => {
       clearTimeout(readyTimer)
@@ -282,8 +307,14 @@ export class OmpRpc extends EventEmitter {
 
   /** Closes stdin so omp drains and exits; kills it if it lingers. */
   async close(graceMs = 4_000): Promise<void> {
+    this.closing = true
+    if (!this.child) {
+      // A start may still be spawning; let it see the closing flag and kill the child.
+      if (this.starting) await this.starting.catch(() => undefined)
+      return
+    }
     const child = this.child
-    if (!child || this.exited) return
+    if (this.exited) return
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
         this.kill()

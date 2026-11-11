@@ -4,7 +4,6 @@ import { CH } from '@shared/channels'
 import type { WorkspaceHost } from './host/host'
 import { HostRegistry } from './host/registry'
 import { registerIpc } from './ipc'
-import { shellEnv } from './omp/env'
 import { AgentFactory } from './services/agents'
 import { ConsultService } from './services/consult'
 import { GitService } from './services/git'
@@ -15,8 +14,7 @@ import { SettingsService } from './services/settings'
 import { TaskLoopService } from './services/task-loop'
 import { TerminalService } from './services/terminal'
 import { UiBroker } from './services/ui-broker'
-import { brokerEnvScript, LoginShare } from './services/login-share'
-import type { SshHost } from './host/ssh'
+import { LoginShare } from './services/login-share'
 
 let mainWindow: BrowserWindow | null = null
 let cleanup: (() => Promise<void>) | null = null
@@ -39,39 +37,23 @@ if (!gotLock) {
     })
 
     const dataDir = app.getPath('userData')
-    let resolvedEnv: NodeJS.ProcessEnv = process.env
-    void shellEnv().then((env) => {
-      resolvedEnv = env
-    })
 
     const settings = new SettingsService()
-    const registry = new HostRegistry(() => shellEnv())
+    const registry = new HostRegistry()
     const activeHost = (): WorkspaceHost => registry.get(settings.workspaceHost)
+    let loginShare: LoginShare
     const omp = new OmpService(
       () => settings.ompPath,
       () => settings.workspacePath,
       join(dataDir, 'omp-status.json'),
-      activeHost
+      activeHost,
+      (host) => loginShare.prelude(host)
     )
     // Shares this Mac's omp logins with SSH hosts that opt in.
-    const loginShare = new LoginShare(() => omp.binary(registry.local), () => omp.env())
-    let shareError: string | null = null
-    omp.prepareHost = async (host) => {
-      const ssh = host as SshHost
-      if (!settings.sharesLogins(host.id)) {
-        ssh.spawnPrefix = ''
-        return
-      }
-      try {
-        const port = await loginShare.attach(ssh)
-        ssh.spawnPrefix = brokerEnvScript(port)
-        shareError = null
-      } catch (error) {
-        // Fall back to the host's own logins rather than failing the spawn.
-        ssh.spawnPrefix = ''
-        shareError = (error as Error).message
-      }
-    }
+    loginShare = new LoginShare(
+      () => omp.binary(registry.local),
+      (hostId) => settings.sharesLogins(hostId)
+    )
     const plan = new PlanService(activeHost, () => settings.workspacePath)
     const git = new GitService(activeHost, () => settings.workspacePath)
     const broker = new UiBroker()
@@ -89,8 +71,7 @@ if (!gotLock) {
     const terminal = new TerminalService(
       () => settings.workspacePath,
       () => settings.terminalShell,
-      activeHost,
-      () => resolvedEnv
+      activeHost
     )
     const loop = new TaskLoopService(plan, git, agents)
 
@@ -130,7 +111,6 @@ if (!gotLock) {
       settings,
       registry,
       loginShare,
-      shareError: () => shareError,
       omp,
       plan,
       git,

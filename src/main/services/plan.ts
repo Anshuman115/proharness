@@ -452,7 +452,7 @@ export class PlanService {
   private startWatching(): void {
     if (this.poller) return
     void this.seedSignature()
-    const interval = this.host().kind === 'ssh' ? 4_000 : 2_000
+    const interval = this.host().pollMs.plan
     this.poller = setInterval(() => void this.poll(), interval)
     this.poller.unref()
   }

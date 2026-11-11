@@ -25,7 +25,7 @@ afterAll(() => {
 
 describe('SshHost.remoteScript', () => {
   it('round-trips a cwd with a space and a quote plus an env value full of metacharacters', () => {
-    const host = new SshHost('example', async () => process.env)
+    const host = new SshHost('example')
     const cwd = realpathSync(tempDir("proharness ssh 'q "))
     const env = { FOO: `a 'b' $c "d"` }
     const script = host.remoteScript(`printf '%s\\n' "$PWD" "$FOO"`, cwd, env)
@@ -37,7 +37,7 @@ describe('SshHost.remoteScript', () => {
   })
 
   it('runs in the shell environment without leaking the exported values into the script text', () => {
-    const host = new SshHost('example', async () => process.env)
+    const host = new SshHost('example')
     const script = host.remoteScript('printf %s "$BAR"', undefined, { BAR: 'plain' })
     expect(runSh(script, { ...process.env, SHELL: '/bin/sh' })).toBe('plain')
     expect(script).toContain('export BAR=plain;')

@@ -34,11 +34,9 @@ export class AgentFactory implements LoopAgentFactory {
     onEvent: (event: SessionEvent) => void
   }): Promise<OmpAgent> {
     const host = this.host()
+    const spawn = await this.omp.spawner(host)
     return new OmpAgent({
-      ompPath: await this.omp.binary(host),
-      env: host.kind === 'local' ? await this.omp.env() : {},
-      host,
-      cwd: this.settings.workspacePath,
+      spawn,
       model: options.model || undefined,
       approval: options.approval,
       mode: 'rpc',
@@ -57,11 +55,9 @@ export class AgentFactory implements LoopAgentFactory {
   /** Ephemeral, read-only omp used for reviews and second opinions. */
   async reviewer(options: { model: string; label: string; onEvent: (event: SessionEvent) => void }): Promise<OmpAgent> {
     const host = this.host()
+    const spawn = await this.omp.spawner(host)
     return new OmpAgent({
-      ompPath: await this.omp.binary(host),
-      env: host.kind === 'local' ? await this.omp.env() : {},
-      host,
-      cwd: this.settings.workspacePath,
+      spawn,
       model: options.model,
       approval: 'yolo',
       mode: 'rpc',

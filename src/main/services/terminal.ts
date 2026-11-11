@@ -1,7 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { resolve, sep } from 'node:path'
 import type { IPty } from '@homebridge/node-pty-prebuilt-multiarch'
 import type {
   TerminalCreateInput,
@@ -10,7 +8,6 @@ import type {
   TerminalExitEvent
 } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
-import { sshClientEnv, type SshHost } from '../host/ssh'
 
 const require = createRequire(__filename)
 
@@ -43,12 +40,13 @@ export class TerminalService {
   private emitExit: (event: TerminalExitEvent) => void = () => undefined
   private ptyModule: PtyModule | null = null
   private ptyLoadError: string | null = null
+  private generation = 0
+  private pending = new Map<string, { generation: number; cancelled: boolean }>()
 
   constructor(
     private readonly workspace: () => string,
     private readonly defaultShell: () => string,
-    private readonly host: () => WorkspaceHost,
-    private readonly baseEnv: () => NodeJS.ProcessEnv = () => process.env
+    private readonly host: () => WorkspaceHost
   ) {
     try {
       this.ptyModule = require('@homebridge/node-pty-prebuilt-multiarch') as PtyModule
@@ -65,103 +63,97 @@ export class TerminalService {
     this.emitExit = onExit
   }
 
-  create(input: TerminalCreateInput): TerminalCreateResult {
+  async create(input: TerminalCreateInput): Promise<TerminalCreateResult> {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(input.id)) throw new Error('Invalid terminal id.')
     if (this.sessions.has(input.id)) this.kill(input.id)
     const host = this.host()
-    const remote = host.kind === 'ssh' ? (host as SshHost) : null
-    const workspace = remote ? host.path.resolve(this.workspace()) : resolve(this.workspace())
-    const requested = remote ? host.path.resolve(workspace, input.cwd || '.') : resolve(workspace, input.cwd || '.')
-    const inside = requested === workspace || requested.startsWith(`${workspace}${remote ? '/' : sep}`)
+    const workspace = host.path.resolve(this.workspace())
+    const requested = host.path.resolve(workspace, input.cwd || '.')
+    const inside = requested === workspace || requested.startsWith(`${workspace}${host.path.sep}`)
     if (!inside) throw new Error('The terminal must run inside the current workspace.')
-    if (!remote && (!existsSync(requested) || !statSync(requested).isDirectory())) {
-      throw new Error('Terminal working directory does not exist.')
-    }
-    const shell = remote ? `ssh ${remote.id}` : input.shell || this.defaultShell() || '/bin/bash'
-    const command = remote ? 'ssh' : shell
-    const ptyArgs = remote
-      ? [...remote.sshArgs(['-tt']), remote.remoteScript('exec "${SHELL:-/bin/bash}" -l', requested)]
-      : ['-l']
-    const pipeArgs = remote ? ptyArgs : ['-i']
-    // A remote cwd does not exist on this Mac; ssh starts from the local cwd.
-    const localCwd = remote ? process.cwd() : requested
-    const base = this.baseEnv()
-    const env = {
-      ...(remote ? sshClientEnv(base) : base),
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      PROHARNESS_TERMINAL: '1'
-    }
+    const shell = input.shell || this.defaultShell() || '/bin/bash'
+    const previous = this.pending.get(input.id)
+    if (previous) previous.cancelled = true
+    const reservation = { generation: this.generation, cancelled: false }
+    this.pending.set(input.id, reservation)
+    try {
+      const launch = await host.terminal(requested, shell)
+      if (reservation.cancelled || reservation.generation !== this.generation) {
+        throw new Error('Terminal start was cancelled.')
+      }
 
-    if (this.ptyModule) {
-      try {
-        const pty = this.ptyModule.spawn(command, ptyArgs, {
-          name: 'xterm-256color',
-          cols: Math.max(20, input.cols || 100),
-          rows: Math.max(5, input.rows || 30),
-          cwd: localCwd,
-          env
-        })
-        const session: TerminalSession = {
-          id: input.id,
-          mode: 'pty',
-          shell,
-          pty,
-          disposed: false
+      if (this.ptyModule) {
+        try {
+          const pty = this.ptyModule.spawn(launch.command, launch.ptyArgs, {
+            name: 'xterm-256color',
+            cols: Math.max(20, input.cols || 100),
+            rows: Math.max(5, input.rows || 30),
+            cwd: launch.cwd,
+            env: launch.env
+          })
+          const session: TerminalSession = {
+            id: input.id,
+            mode: 'pty',
+            shell: launch.shell,
+            pty,
+            disposed: false
+          }
+          this.sessions.set(input.id, session)
+          pty.onData((data) => {
+            if (!session.disposed) this.emitData({ id: input.id, data })
+          })
+          pty.onExit(({ exitCode, signal }) => {
+            if (session.disposed) return
+            session.disposed = true
+            this.sessions.delete(input.id)
+            this.emitExit({ id: input.id, exitCode, signal: signal ? String(signal) : null })
+          })
+          return { id: input.id, shell: launch.shell, cwd: requested, mode: 'pty', warning: null }
+        } catch (error) {
+          this.ptyLoadError = (error as Error).message
         }
-        this.sessions.set(input.id, session)
-        pty.onData((data) => {
-          if (!session.disposed) this.emitData({ id: input.id, data })
-        })
-        pty.onExit(({ exitCode, signal }) => {
-          if (session.disposed) return
-          session.disposed = true
-          this.sessions.delete(input.id)
-          this.emitExit({ id: input.id, exitCode, signal: signal ? String(signal) : null })
-        })
-        return { id: input.id, shell, cwd: requested, mode: 'pty', warning: null }
-      } catch (error) {
-        this.ptyLoadError = (error as Error).message
       }
-    }
 
-    const child = spawn(command, pipeArgs, {
-      cwd: localCwd,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
-    const session: TerminalSession = {
-      id: input.id,
-      mode: 'pipe',
-      shell,
-      child,
-      disposed: false
-    }
-    this.sessions.set(input.id, session)
-    child.stdout.on('data', (data: Buffer) => {
-      if (!session.disposed) this.emitData({ id: input.id, data: data.toString('utf8') })
-    })
-    child.stderr.on('data', (data: Buffer) => {
-      if (!session.disposed) this.emitData({ id: input.id, data: data.toString('utf8') })
-    })
-    child.on('exit', (code, signal) => {
-      if (session.disposed) return
-      session.disposed = true
-      this.sessions.delete(input.id)
-      this.emitExit({ id: input.id, exitCode: code, signal })
-    })
-    child.on('error', (error) => {
-      if (!session.disposed) {
-        this.emitData({ id: input.id, data: `\r\n[terminal error] ${error.message}\r\n` })
+      const child = spawn(launch.command, launch.pipeArgs, {
+        cwd: launch.cwd,
+        env: launch.env,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      const session: TerminalSession = {
+        id: input.id,
+        mode: 'pipe',
+        shell: launch.shell,
+        child,
+        disposed: false
       }
-    })
+      this.sessions.set(input.id, session)
+      child.stdout.on('data', (data: Buffer) => {
+        if (!session.disposed) this.emitData({ id: input.id, data: data.toString('utf8') })
+      })
+      child.stderr.on('data', (data: Buffer) => {
+        if (!session.disposed) this.emitData({ id: input.id, data: data.toString('utf8') })
+      })
+      child.on('exit', (code, signal) => {
+        if (session.disposed) return
+        session.disposed = true
+        this.sessions.delete(input.id)
+        this.emitExit({ id: input.id, exitCode: code, signal })
+      })
+      child.on('error', (error) => {
+        if (!session.disposed) {
+          this.emitData({ id: input.id, data: `\r\n[terminal error] ${error.message}\r\n` })
+        }
+      })
 
-    return {
-      id: input.id,
-      shell,
-      cwd: requested,
-      mode: 'pipe',
-      warning: `PTY unavailable (${this.ptyLoadError || 'native module not loaded'}). Running in pipe mode; interactive full-screen programs will not work.`
+      return {
+        id: input.id,
+        shell: launch.shell,
+        cwd: requested,
+        mode: 'pipe',
+        warning: `PTY unavailable (${this.ptyLoadError || 'native module not loaded'}). Running in pipe mode; interactive full-screen programs will not work.`
+      }
+    } finally {
+      if (this.pending.get(input.id) === reservation) this.pending.delete(input.id)
     }
   }
 
@@ -183,6 +175,11 @@ export class TerminalService {
   }
 
   kill(id: string): void {
+    const pending = this.pending.get(id)
+    if (pending) {
+      pending.cancelled = true
+      this.pending.delete(id)
+    }
     const session = this.sessions.get(id)
     if (!session) return
     session.disposed = true
@@ -208,6 +205,9 @@ export class TerminalService {
   }
 
   dispose(): void {
+    this.generation += 1
+    for (const pending of this.pending.values()) pending.cancelled = true
+    this.pending.clear()
     for (const id of Array.from(this.sessions.keys())) this.kill(id)
   }
 }

@@ -1,10 +1,9 @@
-import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, posix } from 'node:path'
 import { DEFAULT_SESSION_TITLE, titleFromText } from '@shared/defaults'
 import type { ApprovalMode, RecentSession, SessionCreateInput, SessionEvent, ThinkingLevel } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
-import type { SshHost } from '../host/ssh'
 import { OmpAgent } from '../omp/agent'
 import type { GitService } from './git'
 import { createPlanTools, PLAN_SYSTEM_PROMPT, PLAN_TOOL_NAMES } from './host-tools'
@@ -44,7 +43,7 @@ export async function ensureOverlay(host: WorkspaceHost, localPath: string): Pro
   if (host.kind === 'local') return localPath
   const cached = remoteOverlays.get(host.id)
   if (cached) return cached
-  const home = await (host as SshHost).home()
+  const home = await host.home()
   const file = posix.join(home, '.cache', 'proharness', 'omp-overlay.yml')
   await host.writeText(file, overlayYaml())
   remoteOverlays.set(host.id, file)
@@ -92,23 +91,11 @@ async function realpathOr(host: WorkspaceHost, path: string): Promise<string> {
 }
 
 async function readHead(host: WorkspaceHost, file: string, bytes: number): Promise<string> {
-  if (host.kind === 'local') {
-    const fd = openSync(file, 'r')
-    try {
-      const buffer = Buffer.alloc(bytes)
-      const read = readSync(fd, buffer, 0, bytes, 0)
-      return buffer.subarray(0, read).toString('utf8')
-    } finally {
-      closeSync(fd)
-    }
-  }
-  const result = await host.exec('head', ['-c', String(bytes), file])
-  if (result.code !== 0) throw new Error(result.stderr.trim() || `Could not read ${file}.`)
-  return result.stdout
+  return (await host.readFile(file, bytes)).toString('utf8')
 }
 
 async function listRecentSessions(host: WorkspaceHost, cwd: string, limit = 25): Promise<RecentSession[]> {
-  const home = host.kind === 'ssh' ? await (host as SshHost).home() : homedir()
+  const home = await host.home()
   const dir = sessionDirFor(cwd, home)
   if (!(await host.stat(dir))) return []
   const entries = await host.readdir(dir)
@@ -167,6 +154,8 @@ export class SessionManager {
   private sessions = new Map<string, RuntimeSession>()
   private emit: (tabId: string, event: SessionEvent) => void = () => undefined
   private readonly localOverlay: string
+  private generation = 0
+  private pending = new Map<string, { generation: number; cancelled: boolean }>()
 
   constructor(
     private readonly settings: SettingsService,
@@ -205,44 +194,54 @@ export class SessionManager {
   async create(input: SessionCreateInput): Promise<void> {
     if (!TAB_ID_RE.test(input.tabId)) throw new Error('Invalid session id.')
     if (this.sessions.has(input.tabId)) return
-    const host = this.host()
-    const ompPath = await this.omp.binary(host)
-    const env = host.kind === 'local' ? await this.omp.env() : {}
     const tabId = input.tabId
-    const approval: ApprovalMode = this.settings.chatApproval
-    const model = input.model?.trim() || this.settings.chatModel || undefined
-    const agent = new OmpAgent({
-      ompPath,
-      env,
-      host,
-      cwd: this.settings.workspacePath,
-      model,
-      approval,
-      mode: 'rpc-ui',
-      ephemeral: false,
-      configOverlays: [await this.overlayFor(host)],
-      appendSystemPrompt: PLAN_SYSTEM_PROMPT,
-      hostTools: createPlanTools({ plan: this.plan, git: this.git, allowComplete: true }),
-      broker: this.broker,
-      origin: 'session',
-      originId: tabId,
-      originLabel: () => this.sessions.get(tabId)?.title || 'Session',
-      onEvent: (event) => this.emit(tabId, event)
-    })
-    const session: RuntimeSession = { tabId, title: input.title || DEFAULT_SESSION_TITLE, agent, starting: Promise.resolve() }
-    session.starting = (async () => {
-      await agent.start()
-      if (input.resumeFile) {
-        await agent.switchSession(input.resumeFile)
-      }
-    })()
-    this.sessions.set(tabId, session)
+    const host = this.host()
+    const previous = this.pending.get(tabId)
+    if (previous) previous.cancelled = true
+    const reservation = { generation: this.generation, cancelled: false }
+    this.pending.set(tabId, reservation)
     try {
-      await session.starting
-    } catch (error) {
-      this.emit(tabId, { type: 'status', status: 'error', detail: (error as Error).message })
-      this.emit(tabId, { type: 'notice', level: 'error', message: (error as Error).message })
-      throw error
+      const spawn = await this.omp.spawner(host)
+      const overlay = await this.overlayFor(host)
+      if (reservation.cancelled) throw new Error('Session start was cancelled.')
+      if (reservation.generation !== this.generation) {
+        throw new Error('The workspace changed while the session was opening.')
+      }
+      if (this.sessions.has(tabId)) return
+      const approval: ApprovalMode = this.settings.chatApproval
+      const model = input.model?.trim() || this.settings.chatModel || undefined
+      const agent = new OmpAgent({
+        spawn,
+        model,
+        approval,
+        mode: 'rpc-ui',
+        ephemeral: false,
+        configOverlays: [overlay],
+        appendSystemPrompt: PLAN_SYSTEM_PROMPT,
+        hostTools: createPlanTools({ plan: this.plan, git: this.git, allowComplete: true }),
+        broker: this.broker,
+        origin: 'session',
+        originId: tabId,
+        originLabel: () => this.sessions.get(tabId)?.title || 'Session',
+        onEvent: (event) => this.emit(tabId, event)
+      })
+      const session: RuntimeSession = { tabId, title: input.title || DEFAULT_SESSION_TITLE, agent, starting: Promise.resolve() }
+      session.starting = (async () => {
+        await agent.start()
+        if (input.resumeFile) {
+          await agent.switchSession(input.resumeFile)
+        }
+      })()
+      this.sessions.set(tabId, session)
+      try {
+        await session.starting
+      } catch (error) {
+        this.emit(tabId, { type: 'status', status: 'error', detail: (error as Error).message })
+        this.emit(tabId, { type: 'notice', level: 'error', message: (error as Error).message })
+        throw error
+      }
+    } finally {
+      if (this.pending.get(tabId) === reservation) this.pending.delete(tabId)
     }
   }
 
@@ -295,6 +294,11 @@ export class SessionManager {
   }
 
   async close(tabId: string): Promise<void> {
+    const pending = this.pending.get(tabId)
+    if (pending) {
+      pending.cancelled = true
+      this.pending.delete(tabId)
+    }
     const session = this.sessions.get(tabId)
     if (!session) return
     this.sessions.delete(tabId)
@@ -303,6 +307,9 @@ export class SessionManager {
   }
 
   async dispose(): Promise<void> {
+    this.generation += 1
+    for (const pending of this.pending.values()) pending.cancelled = true
+    this.pending.clear()
     const all = [...this.sessions.values()]
     this.sessions.clear()
     await Promise.all(all.map((session) => session.agent.close()))

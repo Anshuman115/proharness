@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { resolve, sep } from 'node:path'
 import { CH } from '@shared/channels'
 import type {
@@ -9,7 +9,6 @@ import type {
   TerminalCreateInput,
   ThinkingLevel,
   UiResponse,
-  LoginShareStatus,
   WorkspaceListing,
   WorkspaceRef
 } from '@shared/types'
@@ -33,7 +32,6 @@ interface IpcDependencies {
   settings: SettingsService
   registry: HostRegistry
   loginShare: LoginShare
-  shareError: () => string | null
   omp: OmpService
   plan: PlanService
   git: GitService
@@ -62,7 +60,7 @@ export function registerIpc(deps: IpcDependencies): void {
 
   /** Expands `~` and relative paths against the host's home directory. */
   const expandPath = async (host: WorkspaceHost, input: string): Promise<string> => {
-    const home = host.kind === 'ssh' ? await (host as SshHost).home() : app.getPath('home')
+    const home = await host.home()
     const path = input.trim()
     if (!path) return home
     if (path === '~') return home
@@ -151,16 +149,10 @@ export function registerIpc(deps: IpcDependencies): void {
       .filter((entry) => entry.isDirectory && !entry.name.startsWith('.'))
       .sort((a, b) => a.name.localeCompare(b.name))
     const repos = new Set<string>()
-    if (host.kind === 'ssh') {
-      const found = await host.exec('find', [path, '-mindepth', '2', '-maxdepth', '2', '-name', '.git'])
-      for (const line of found.stdout.split('\n')) {
-        const repo = line.trim()
-        if (repo) repos.add(host.path.basename(host.path.dirname(repo)))
-      }
-    } else {
-      for (const entry of entries) {
-        if (await host.stat(host.path.join(path, entry.name, '.git'))) repos.add(entry.name)
-      }
+    const found = await host.exec('find', [path, '-mindepth', '2', '-maxdepth', '2', '-name', '.git'])
+    for (const line of found.stdout.split('\n')) {
+      const repo = line.trim()
+      if (repo) repos.add(host.path.basename(host.path.dirname(repo)))
     }
     return {
       path,
@@ -170,33 +162,26 @@ export function registerIpc(deps: IpcDependencies): void {
 
   ipcMain.handle(CH.ompRefresh, () => omp.refresh())
 
-  const shareStatus = (hostId: string): LoginShareStatus => ({
-    hostId,
-    enabled: settings.sharesLogins(hostId),
-    active: deps.loginShare.isAttached(hostId),
-    error: settings.sharesLogins(hostId) ? deps.shareError() : null
-  })
-
-  ipcMain.handle(CH.loginShareStatus, () => shareStatus(settings.workspaceHost))
+  ipcMain.handle(CH.loginShareStatus, () => deps.loginShare.status(settings.workspaceHost))
 
   // Toggling restarts the host's omp processes so they pick up the other logins.
   ipcMain.handle(CH.loginShareSet, async (_event, enabled: boolean) => {
     const hostId = settings.workspaceHost
     if (hostId === 'local') throw new Error('Login sharing applies to SSH workspaces.')
-    const host = (await registry.connect(hostId)) as SshHost
+    const host = await registry.connect(hostId)
     settings.setShareLogins(hostId, Boolean(enabled))
     await loop.stop()
     broker.cancelAll()
     await sessions.dispose()
     if (enabled) {
-      await omp.binary(host)
-      if (deps.shareError()) throw new Error(deps.shareError() || 'Login sharing failed.')
+      await deps.loginShare.prelude(host)
+      const status = deps.loginShare.status(hostId)
+      if (status.error) throw new Error(status.error)
     } else {
-      host.spawnPrefix = ''
-      await deps.loginShare.detach(host)
+      await deps.loginShare.detach(host as SshHost)
     }
     await omp.refresh()
-    return { settings: settings.publicSettings(), status: shareStatus(hostId) }
+    return { settings: settings.publicSettings(), status: deps.loginShare.status(hostId) }
   })
 
   ipcMain.handle(CH.goalsList, () => plan.listGoals())

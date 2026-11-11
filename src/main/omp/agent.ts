@@ -1,5 +1,5 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ContentBlock, SessionEvent, SessionSnapshot, UiRequest } from '@shared/types'
-import type { WorkspaceHost } from '../host/host'
 import type { UiAnswer, UiBroker } from '../services/ui-broker'
 import { OmpRpc, type Frame } from './rpc'
 import {
@@ -26,12 +26,12 @@ export interface HostTool {
   run: (args: Record<string, unknown>, signal: AbortSignal) => Promise<string>
 }
 
+/** Starts one omp process with the given arguments. */
+export type OmpSpawn = (args: string[]) => Promise<ChildProcessWithoutNullStreams>
+
 interface OmpAgentOptions {
-  ompPath: string
-  env: NodeJS.ProcessEnv
-  /** Where omp runs. SSH hosts spawn it over ssh in `cwd`. */
-  host?: WorkspaceHost
-  cwd: string
+  /** Starts omp on the workspace host with this agent's arguments. */
+  spawn: OmpSpawn
   model?: string
   thinking?: string
   approval: string
@@ -83,19 +83,7 @@ export class OmpAgent {
     if (options.noExtensions) args.push('--no-extensions')
     for (const overlay of options.configOverlays || []) args.push('--config', overlay)
     if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt)
-    const remote = options.host?.kind === 'ssh' ? options.host : null
-    this.rpc = new OmpRpc({
-      command: options.ompPath,
-      args,
-      cwd: options.cwd,
-      env: { ...options.env, PI_RPC_EMIT_TITLE: '0' },
-      ...(remote
-        ? {
-            spawnChild: () =>
-              remote.spawn({ command: options.ompPath, args, cwd: options.cwd, env: { PI_RPC_EMIT_TITLE: '0' } })
-          }
-        : {})
-    })
+    this.rpc = new OmpRpc({ spawnChild: () => options.spawn(args) })
     this.rpc.on('frame', (frame: Frame) => this.handle(frame))
     this.rpc.on('exit', (info: { error: string | null }) => {
       this.closed = true

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import type { LoopState } from '../src/shared/types'
-import { shellEnv } from '../src/main/omp/env'
 import { HostRegistry } from '../src/main/host/registry'
 import type { SshHost } from '../src/main/host/ssh'
 import { AgentFactory } from '../src/main/services/agents'
@@ -20,7 +19,7 @@ const hostId = process.env.PROHARNESS_SSH_HOST || ''
 
 describe.skipIf(!hostId)('ssh loop live', () => {
   it('implements, reviews and commits on the remote host', async () => {
-    const registry = new HostRegistry(shellEnv)
+    const registry = new HostRegistry()
     const host = (await registry.connect(hostId)) as SshHost
     const root = `${await host.home()}/.cache/proharness-loop-${Date.now()}`
     await host.run(`mkdir -p ${root} && cd ${root} && git init -q -b main && git config user.email t@t && git config user.name t && echo '# demo' > README.md && git add -A && git commit -qm init`)

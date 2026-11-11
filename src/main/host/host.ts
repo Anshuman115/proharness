@@ -38,7 +38,22 @@ export interface SpawnSpec {
   command: string
   args: string[]
   cwd: string
+  /** Extra environment for the child, merged over the host's environment. */
   env?: Record<string, string>
+  /** Trusted shell code prepended to the command line. Only the ssh host applies it. */
+  prelude?: string
+}
+
+/** How to start an interactive terminal on a host. */
+export interface TerminalLaunch {
+  command: string
+  ptyArgs: string[]
+  pipeArgs: string[]
+  /** Local cwd for the client process. */
+  cwd: string
+  env: NodeJS.ProcessEnv
+  /** Label shown for the terminal, e.g. "ssh devbox". */
+  shell: string
 }
 
 export interface WorkspaceHost {
@@ -46,25 +61,30 @@ export interface WorkspaceHost {
   /** "local" or the ssh destination, e.g. "devbox". */
   readonly id: string
 
+  /** Home directory on this host. */
+  home(): Promise<string>
+  /** Opens or reuses the host's connection. */
+  connect(): Promise<void>
   /** Runs a program (no shell) and resolves even on non-zero exit. */
   exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>
-  readFile(path: string): Promise<Buffer>
+  /** Reads a file; `maxBytes` limits how much is read and transferred. */
+  readFile(path: string, maxBytes?: number): Promise<Buffer>
   readText(path: string): Promise<string>
   /** Atomic write: temp file then rename. Creates parent directories. */
   writeText(path: string, content: string): Promise<void>
   appendText(path: string, content: string): Promise<void>
   mkdirp(path: string): Promise<void>
-  /** null when the path does not exist. */
+  /** null only when the path does not exist; real access errors propagate. */
   stat(path: string): Promise<StatInfo | null>
   readdir(path: string): Promise<DirEntry[]>
   realpath(path: string): Promise<string>
   /** Spawns a long-lived child whose stdio is piped through to the host process. */
-  spawn(spec: SpawnSpec): ChildProcessWithoutNullStreams
-  /** Environment for programs on this host (login PATH etc.). Local only; ssh returns {}. */
-  env(): Promise<NodeJS.ProcessEnv>
+  spawn(spec: SpawnSpec): Promise<ChildProcessWithoutNullStreams>
+  terminal(cwd: string, shell: string): Promise<TerminalLaunch>
+  /** Background watcher intervals for this host. */
+  readonly pollMs: { plan: number; git: number }
   /** Path helpers for this host's filesystem. */
   readonly path: typeof posix
-  dispose(): void
 }
 
 /** Quotes one argument for a POSIX shell. */
@@ -76,6 +96,13 @@ export function shq(value: string): string {
 
 export function shellLine(command: string, args: string[]): string {
   return [command, ...args].map(shq).join(' ')
+}
+
+/** Rejects a read limit that cannot be used safely. */
+export function assertMaxBytes(maxBytes: number | undefined): void {
+  if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
+    throw new Error('maxBytes must be a non-negative safe integer.')
+  }
 }
 
 /** Resolves when `child` exits, collecting output. */

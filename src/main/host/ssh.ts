@@ -2,13 +2,27 @@ import { type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, posix } from 'node:path'
-import { collect, shellLine, shq, spawnPiped, type DirEntry, type ExecOptions, type ExecResult, type SpawnSpec, type StatInfo, type WorkspaceHost } from './host'
+import { shellEnv } from '../omp/env'
+import {
+  assertMaxBytes,
+  collect,
+  shellLine,
+  shq,
+  spawnPiped,
+  type DirEntry,
+  type ExecOptions,
+  type ExecResult,
+  type SpawnSpec,
+  type StatInfo,
+  type TerminalLaunch,
+  type WorkspaceHost
+} from './host'
 
 /**
  * Env for the local ssh client. macOS ssh forwards LANG/LC_* (SendEnv), and
  * servers without that locale print setlocale warnings, so drop them.
  */
-export function sshClientEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function sshClientEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(env)) {
     if (key === 'LANG' || key === 'LANGUAGE' || key.startsWith('LC_')) continue
@@ -21,12 +35,12 @@ export function sshClientEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export class SshHost implements WorkspaceHost {
   readonly kind = 'ssh' as const
   readonly path = posix
+  readonly pollMs = { plan: 4_000, git: 5_000 }
   private readonly controlPath: string
 
   constructor(
     /** An ~/.ssh/config alias or user@host. */
-    readonly id: string,
-    private readonly localEnv: () => Promise<NodeJS.ProcessEnv>
+    readonly id: string
   ) {
     // macOS caps unix socket paths at 104 bytes and $TMPDIR is long, so use
     // ~/.ssh (short, already private) for the control sockets.
@@ -65,11 +79,7 @@ export class SshHost implements WorkspaceHost {
   }
 
   private async local(): Promise<NodeJS.ProcessEnv> {
-    return sshClientEnv(await this.localEnv())
-  }
-
-  async env(): Promise<NodeJS.ProcessEnv> {
-    return {}
+    return sshClientEnv(await shellEnv())
   }
 
   async run(line: string, options: ExecOptions = {}): Promise<ExecResult> {
@@ -93,8 +103,13 @@ export class SshHost implements WorkspaceHost {
     return result
   }
 
-  async readFile(path: string): Promise<Buffer> {
-    const result = await this.must(`base64 < ${shq(path)}`, `Reading ${path}`, { maxBuffer: 64 * 1024 * 1024 })
+  async readFile(path: string, maxBytes?: number): Promise<Buffer> {
+    assertMaxBytes(maxBytes)
+    const line =
+      maxBytes === undefined
+        ? `base64 < ${shq(path)}`
+        : `t=$(mktemp "\${TMPDIR:-/tmp}/ph-read.XXXXXX") || exit 1; trap 'rm -f "$t"' EXIT; head -c ${maxBytes} ${shq(path)} > "$t" && base64 < "$t"`
+    const result = await this.must(line, `Reading ${path}`, { maxBuffer: 64 * 1024 * 1024 })
     return Buffer.from(result.stdout.replace(/\s+/g, ''), 'base64')
   }
 
@@ -119,9 +134,13 @@ export class SshHost implements WorkspaceHost {
   }
 
   async stat(path: string): Promise<StatInfo | null> {
-    const result = await this.run(`stat -L -c '%F|%s|%Y' -- ${shq(path)} 2>/dev/null`)
-    if (result.code !== 0 || !result.stdout.trim()) return null
+    const result = await this.run(`stat -L -c '%F|%s|%Y' -- ${shq(path)}`)
+    if (result.code !== 0) {
+      if (/no such file|not found|not a directory/i.test(result.stderr)) return null
+      throw new Error(`Could not read ${path} on ${this.id}: ${(result.stderr || result.stdout).trim().slice(0, 400)}`)
+    }
     const [type, size, mtime] = result.stdout.trim().split('|')
+    if (!type) throw new Error(`Could not read ${path} on ${this.id}.`)
     return {
       isFile: type.startsWith('regular'),
       isDirectory: type === 'directory',
@@ -152,26 +171,33 @@ export class SshHost implements WorkspaceHost {
     return result.stdout.trim()
   }
 
-  spawn(spec: SpawnSpec): ChildProcessWithoutNullStreams {
-    const line = shellLine(spec.command, spec.args)
-    const command = `${this.spawnPrefix}exec ${line}`
-    // ssh needs the env synchronously here; fall back to the parent env.
-    return spawnPiped('ssh', [...this.sshArgs(['-T']), this.remoteScript(command, spec.cwd, spec.env)], {
-      env: sshClientEnv({ ...process.env, ...this.cachedLocal })
+  async spawn(spec: SpawnSpec): Promise<ChildProcessWithoutNullStreams> {
+    const line = `${spec.prelude ?? ''}exec ${shellLine(spec.command, spec.args)}`
+    return spawnPiped('ssh', [...this.sshArgs(['-T']), this.remoteScript(line, spec.cwd, spec.env)], {
+      env: await this.local()
     })
   }
 
-  private cachedLocal: NodeJS.ProcessEnv = {}
-
-  /**
-   * Shell commands run before every spawned program (omp), e.g. exports that
-   * point it at a tunnelled auth broker. Not applied to exec().
-   */
-  spawnPrefix = ''
+  async terminal(cwd: string, _shell: string): Promise<TerminalLaunch> {
+    const args = [...this.sshArgs(['-tt']), this.remoteScript('exec "${SHELL:-/bin/bash}" -l', cwd)]
+    return {
+      command: 'ssh',
+      ptyArgs: args,
+      pipeArgs: args,
+      cwd: process.cwd(),
+      env: {
+        ...(await this.local()),
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+        PROHARNESS_TERMINAL: '1'
+      },
+      shell: `ssh ${this.id}`
+    }
+  }
 
   private async control(args: string[]): Promise<void> {
     const child = spawnPiped('ssh', ['-o', `ControlPath=${this.controlPath}`, ...args, this.id], {
-      env: sshClientEnv(await this.localEnv())
+      env: sshClientEnv(await shellEnv())
     })
     const result = await collect(child, { timeoutMs: 15_000 })
     if (result.code !== 0) throw new Error(`ssh ${args.join(' ')} failed: ${result.stderr.trim()}`)
@@ -187,9 +213,8 @@ export class SshHost implements WorkspaceHost {
     await this.control(['-O', 'cancel', '-R', `127.0.0.1:${remotePort}:127.0.0.1:${localPort}`])
   }
 
-  /** Opens (or reuses) the control connection and caches the local env for spawn(). */
+  /** Opens (or reuses) the control connection. */
   async connect(): Promise<void> {
-    this.cachedLocal = await this.localEnv()
     await this.must('true', 'Connecting')
   }
 

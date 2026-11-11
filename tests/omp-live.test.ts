@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '../src/shared/types'
+import { LocalHost } from '../src/main/host/local'
 import { OmpAgent } from '../src/main/omp/agent'
-import { findOmp, shellEnv } from '../src/main/omp/env'
+import { OmpService } from '../src/main/services/omp'
 import { UiBroker } from '../src/main/services/ui-broker'
 
 /**
@@ -17,10 +18,10 @@ const model = process.env.PROHARNESS_LIVE_MODEL || 'commandcode/deepseek/deepsee
 
 describe.skipIf(!live)('omp live', () => {
   it('streams a turn, serves a host tool, and routes an approval', async () => {
-    const env = await shellEnv()
-    const omp = findOmp('', env)
-    expect(omp).toBeTruthy()
     const cwd = mkdtempSync(join(tmpdir(), 'proharness-live-'))
+    const host = new LocalHost()
+    const omp = new OmpService(() => '', () => cwd, join(cwd, '.omp-status.json'), () => host)
+    const spawn = await omp.spawner(host)
     execFileSync('git', ['init', '-q'], { cwd })
     const overlay = join(cwd, 'overlay.yml')
     writeFileSync(overlay, 'tools:\n  approval:\n    echo_plan: allow\n')
@@ -36,9 +37,7 @@ describe.skipIf(!live)('omp live', () => {
     const events: SessionEvent[] = []
     let hostCalls = 0
     const agent = new OmpAgent({
-      ompPath: omp!,
-      env,
-      cwd,
+      spawn,
       model,
       approval: 'always-ask',
       mode: 'rpc',
