@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Folder, FolderOpen, Loader2, Server, X } from 'lucide-react'
 import type { WorkspaceListing, WorkspaceRef } from '@shared/types'
 import { useAppStore } from '../store'
-
-const LOCAL = 'local'
+import { isLocalHost, LOCAL_HOST } from '../lib/host'
 
 function joinPath(base: string, name: string): string {
   return base.endsWith('/') ? `${base}${name}` : `${base}/${name}`
@@ -16,7 +15,7 @@ function parentPath(path: string): string {
 }
 
 function defaultPath(host: string): string {
-  if (host !== LOCAL) return '~'
+  if (!isLocalHost(host)) return '~'
   return useAppStore.getState().settings?.workspacePath || '~'
 }
 
@@ -29,7 +28,7 @@ export function WorkspaceDialog(): React.JSX.Element | null {
   const chooseWorkspace = useAppStore((state) => state.chooseWorkspace)
 
   const [hosts, setHosts] = useState<string[]>([])
-  const [host, setHost] = useState(LOCAL)
+  const [host, setHost] = useState(LOCAL_HOST)
   const [otherHost, setOtherHost] = useState('')
   const [input, setInput] = useState('')
   const [dir, setDir] = useState('')
@@ -37,13 +36,14 @@ export function WorkspaceDialog(): React.JSX.Element | null {
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hostsError, setHostsError] = useState<string | null>(null)
   // Bumped on every explicit navigation so re-picking the same host or path reloads.
   const [reload, setReload] = useState(0)
 
   useEffect(() => {
     if (!open) return
     const current = useAppStore.getState().settings
-    const nextHost = current?.workspaceHost || LOCAL
+    const nextHost = current?.workspaceHost || LOCAL_HOST
     setHost(nextHost)
     setOtherHost('')
     setInput(defaultPath(nextHost))
@@ -52,10 +52,11 @@ export function WorkspaceDialog(): React.JSX.Element | null {
     setError(null)
     setBusy(false)
     setHosts([])
+    setHostsError(null)
     void window.proharness.workspace
       .sshHosts()
       .then((list) => setHosts(list))
-      .catch(() => setHosts([]))
+      .catch((err: Error) => setHostsError(err.message))
   }, [open])
 
   useEffect(() => {
@@ -93,8 +94,8 @@ export function WorkspaceDialog(): React.JSX.Element | null {
   }, [open, busy, setOpen])
 
   const options = useMemo(() => {
-    const list = [LOCAL, ...hosts]
-    if (host !== LOCAL && !list.includes(host)) list.push(host)
+    const list = [LOCAL_HOST, ...hosts]
+    if (!isLocalHost(host) && !list.includes(host)) list.push(host)
     return list
   }, [hosts, host])
 
@@ -114,7 +115,7 @@ export function WorkspaceDialog(): React.JSX.Element | null {
 
   const useOtherHost = (): void => {
     const next = otherHost.trim()
-    if (!next || next === LOCAL) return
+    if (!next || isLocalHost(next)) return
     pickHost(next)
   }
 
@@ -148,6 +149,18 @@ export function WorkspaceDialog(): React.JSX.Element | null {
     void openRef({ host, path })
   }
 
+  const chooseWithFinder = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      if (await chooseWorkspace()) setOpen(false)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={() => !busy && setOpen(false)}>
       <div
@@ -173,7 +186,7 @@ export function WorkspaceDialog(): React.JSX.Element | null {
           <div className="segmented workspace-dialog__hosts" role="group" aria-label="Workspace host">
             {options.map((value) => (
               <button key={value} type="button" className={host === value ? 'is-active' : ''} onClick={() => pickHost(value)}>
-                {value === LOCAL ? 'This Mac' : value}
+                {isLocalHost(value) ? 'This Mac' : value}
               </button>
             ))}
           </div>
@@ -191,6 +204,7 @@ export function WorkspaceDialog(): React.JSX.Element | null {
             />
           </div>
         </div>
+        {hostsError ? <div className="inline-error">{hostsError}</div> : null}
 
         {recent.length ? (
           <div className="workspace-dialog__section">
@@ -206,7 +220,7 @@ export function WorkspaceDialog(): React.JSX.Element | null {
                 >
                   <span className="recent-row__title">{item.path}</span>
                   <span className="recent-row__meta">
-                    <span className="host-chip">{item.host === LOCAL ? 'This Mac' : item.host}</span>
+                    <span className="host-chip">{isLocalHost(item.host) ? 'This Mac' : item.host}</span>
                   </span>
                 </button>
               ))}
@@ -225,7 +239,7 @@ export function WorkspaceDialog(): React.JSX.Element | null {
               onKeyDown={(event) => {
                 if (event.key === 'Enter') submitPath()
               }}
-              placeholder={host === LOCAL ? '/Users/you/project' : '~/project'}
+              placeholder={isLocalHost(host) ? '/Users/you/project' : '~/project'}
               spellCheck={false}
             />
           </div>
@@ -233,7 +247,7 @@ export function WorkspaceDialog(): React.JSX.Element | null {
           {loading ? (
             <p className="workspace-dialog__status">
               <Loader2 size={13} className="spin" />
-              {host === LOCAL ? 'Listing folders…' : `Connecting to ${host}…`}
+              {isLocalHost(host) ? 'Listing folders…' : `Connecting to ${host}…`}
             </p>
           ) : null}
           {error ? <div className="inline-error">{error}</div> : null}
@@ -281,15 +295,12 @@ export function WorkspaceDialog(): React.JSX.Element | null {
         </div>
 
         <div className="workspace-dialog__foot">
-          {host === LOCAL ? (
+          {isLocalHost(host) ? (
             <button
               type="button"
               className="btn btn--ghost"
               disabled={busy}
-              onClick={() => {
-                void chooseWorkspace()
-                setOpen(false)
-              }}
+              onClick={() => void chooseWithFinder()}
             >
               <FolderOpen size={13} /> Choose with Finder…
             </button>

@@ -20,12 +20,12 @@ import {
   X,
   XCircle
 } from 'lucide-react'
-import { providerOf } from '@shared/models'
+import { providerOf, shortModel } from '@shared/models'
 import { THINKING_LEVELS, type ContentBlock, type ThinkingLevel, type ToolBlock } from '@shared/types'
 import { useAppStore, type ChatMessage, type ChatTab } from '../store'
 import { Markdown } from './Markdown'
 import { ModelPicker } from './ModelPicker'
-import { approvalLabel, formatClock, formatCost, formatRelative, formatTokens, shortModel, statusLabel } from '../lib/format'
+import { approvalLabel, formatClock, formatCost, formatRelative, formatTokens, statusLabel } from '../lib/format'
 
 export function ChatPanel(): React.JSX.Element {
   const tabs = useAppStore((state) => state.tabs)
@@ -267,6 +267,7 @@ function SessionHeader({ tab }: { tab: ChatTab }): React.JSX.Element {
 function SessionBlank({ tab }: { tab: ChatTab }): React.JSX.Element {
   const goal = useAppStore((state) => state.goalDetail)
   const setDraft = useAppStore((state) => state.setDraft)
+  const focusComposer = useAppStore((state) => state.focusComposer)
   const setDesignGoal = useAppStore((state) => state.setDesignGoal)
   const omp = useAppStore((state) => state.omp)
   const nextTask = goal?.phases.flatMap((phase) => phase.tasks).find((task) => !task.checked)
@@ -321,7 +322,7 @@ function SessionBlank({ tab }: { tab: ChatTab }): React.JSX.Element {
             className="prompt-card"
             onClick={() => {
               setDraft(suggestion)
-              window.dispatchEvent(new CustomEvent('proharness:focus-composer'))
+              focusComposer()
             }}
           >
             <span className="prompt-card__icon">{index === 0 ? <Sparkles size={14} /> : index === 1 ? <FileText size={14} /> : <ListChecks size={14} />}</span>
@@ -485,6 +486,7 @@ function Composer({ tab }: { tab: ChatTab }): React.JSX.Element {
   const sendMessage = useAppStore((state) => state.sendMessage)
   const stopActive = useAppStore((state) => state.stopActive)
   const removeQueued = useAppStore((state) => state.removeQueued)
+  const composerFocus = useAppStore((state) => state.composerFocus)
   const goal = useAppStore((state) => state.goalDetail)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [slashIndex, setSlashIndex] = useState(0)
@@ -492,6 +494,7 @@ function Composer({ tab }: { tab: ChatTab }): React.JSX.Element {
   const disabled = tab.status === 'starting' || tab.status === 'closed' || tab.status === 'error'
   const nextTask = goal?.phases.flatMap((phase) => phase.tasks).find((task) => !task.checked)
   const queue = tab.snapshot?.queue || { steering: [], followUp: [] }
+  const focusComposer = useAppStore((state) => state.focusComposer)
 
   const slashQuery = /^\/[\w:-]*$/.test(draft) ? draft.slice(1).toLowerCase() : null
   const slashMatches = useMemo(
@@ -500,10 +503,8 @@ function Composer({ tab }: { tab: ChatTab }): React.JSX.Element {
   )
 
   useEffect(() => {
-    const focus = (): void => textareaRef.current?.focus()
-    window.addEventListener('proharness:focus-composer', focus)
-    return () => window.removeEventListener('proharness:focus-composer', focus)
-  }, [])
+    if (composerFocus > 0) textareaRef.current?.focus()
+  }, [composerFocus])
 
   useEffect(() => {
     const textarea = textareaRef.current
@@ -614,7 +615,7 @@ function Composer({ tab }: { tab: ChatTab }): React.JSX.Element {
                 className="context-next"
                 onClick={() => {
                   setDraft(`Implement task ${nextTask.id} of goal ${goal.id}: ${nextTask.title}. Read goals/${goal.id}/DESIGN.md first, then verify the change.`)
-                  textareaRef.current?.focus()
+                  focusComposer()
                 }}
               >
                 <Circle size={9} /> next {nextTask.id} · {nextTask.title}

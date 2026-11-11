@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Check, CheckCircle2, FolderOpen, Loader2, Pin, RefreshCw, X, XCircle } from 'lucide-react'
-import { APPROVAL_MODES, type ApprovalMode, type LoginShareStatus, type SettingsPatch } from '@shared/types'
+import { shortModel } from '@shared/models'
+import { APPROVAL_MODES, type ApprovalMode, type SettingsPatch } from '@shared/types'
 import { useAppStore } from '../store'
-import { approvalHint, approvalLabel, formatRelative, shortModel } from '../lib/format'
+import { approvalHint, approvalLabel, formatRelative } from '../lib/format'
+import { isLocalHost } from '../lib/host'
 import { ModelNotes, ModelPicker } from './ModelPicker'
 
 export function SettingsDialog(): React.JSX.Element | null {
@@ -39,7 +41,7 @@ export function SettingsDialog(): React.JSX.Element | null {
     setTerminalShell(settings.terminalShell)
     setReduceMotion(settings.reduceMotion)
     setError(null)
-  }, [open, settings])
+  }, [open, settings?.workspaceHost, settings?.workspacePath])
 
   useEffect(() => {
     if (!open) return
@@ -143,7 +145,7 @@ export function SettingsDialog(): React.JSX.Element | null {
               <h3>Models</h3>
               <p>
                 Saved separately for each host
-                {settings.workspaceHost !== 'local' ? ` (now: ${settings.workspaceHost})` : ' (now: this Mac)'}. Empty means omp's
+                {isLocalHost(settings.workspaceHost) ? ' (now: this Mac)' : ` (now: ${settings.workspaceHost})`}. Empty means omp's
                 default on that host. Each tab can switch models at any time.
               </p>
             </div>
@@ -213,7 +215,7 @@ export function SettingsDialog(): React.JSX.Element | null {
                 <label>Project folder</label>
                 <div className="input-with-action">
                   <input
-                    value={settings.workspaceHost === 'local' ? settings.workspacePath : `${settings.workspaceHost}:${settings.workspacePath}`}
+                    value={isLocalHost(settings.workspaceHost) ? settings.workspacePath : `${settings.workspaceHost}:${settings.workspacePath}`}
                     readOnly
                     spellCheck={false}
                   />
@@ -230,7 +232,7 @@ export function SettingsDialog(): React.JSX.Element | null {
                 </div>
                 <p className="field-hint">Changing it closes open tabs and stops the loop.</p>
               </div>
-              {settings.workspaceHost !== 'local' ? <LoginShareField host={settings.workspaceHost} /> : null}
+              {isLocalHost(settings.workspaceHost) ? null : <LoginShareField host={settings.workspaceHost} />}
               <div className="field-row">
                 <div className="field field--grow">
                   <label htmlFor="settings-shell">Terminal shell</label>
@@ -273,30 +275,15 @@ export function SettingsDialog(): React.JSX.Element | null {
 
 /** Lets an SSH host use this Mac's omp logins through a tunnelled auth broker. */
 function LoginShareField({ host }: { host: string }): React.JSX.Element {
-  const pushToast = useAppStore((state) => state.pushToast)
-  const [status, setStatus] = useState<LoginShareStatus | null>(null)
-  const [busy, setBusy] = useState(false)
+  const loginShare = useAppStore((state) => state.loginShare)
+  const busy = useAppStore((state) => state.loginShareBusy)
+  const refreshLoginShare = useAppStore((state) => state.refreshLoginShare)
+  const setLoginShare = useAppStore((state) => state.setLoginShare)
+  const status = loginShare?.hostId === host ? loginShare : null
 
   useEffect(() => {
-    void window.proharness.loginShare.status().then(setStatus).catch(() => setStatus(null))
-  }, [host])
-
-  const toggle = async (): Promise<void> => {
-    const next = !status?.enabled
-    setBusy(true)
-    try {
-      const result = await window.proharness.loginShare.set(next)
-      setStatus(result.status)
-      useAppStore.setState({ settings: result.settings })
-      await useAppStore.getState().resetWorkspace()
-      pushToast('success', next ? `${host} now uses this Mac's logins.` : `${host} uses its own logins again.`)
-    } catch (error) {
-      pushToast('error', (error as Error).message)
-      void window.proharness.loginShare.status().then(setStatus).catch(() => undefined)
-    } finally {
-      setBusy(false)
-    }
-  }
+    void refreshLoginShare()
+  }, [host, refreshLoginShare])
 
   return (
     <div className="field">
@@ -307,7 +294,7 @@ function LoginShareField({ host }: { host: string }): React.JSX.Element {
           className={`switch ${status?.enabled ? 'is-on' : ''}`}
           role="switch"
           aria-checked={Boolean(status?.enabled)}
-          onClick={() => void toggle()}
+          onClick={() => void setLoginShare(!status?.enabled)}
           disabled={busy}
         >
           <span />

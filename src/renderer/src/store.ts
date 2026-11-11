@@ -8,6 +8,7 @@ import type {
   GitSummary,
   GoalDetail,
   GoalSummary,
+  LoginShareStatus,
   LoopConfig,
   LoopEvent,
   LoopLogEntry,
@@ -24,6 +25,7 @@ import type {
   UiRequest,
   WorkspaceRef
 } from '@shared/types'
+import { isLocalHost } from './lib/host'
 
 export interface ChatMessage {
   id: string
@@ -143,6 +145,9 @@ interface AppStore {
   paletteOpen: boolean
   recentOpen: boolean
   recent: RecentSession[]
+  composerFocus: number
+  /** Bumped on every workspace reset so views restart host-scoped processes. */
+  workspaceRevision: number
 
   activeGoalId: string | null
   goalDetail: GoalDetail | null
@@ -155,6 +160,9 @@ interface AppStore {
   diff: GitFileDiff | null
   diffLoading: boolean
 
+  loginShare: LoginShareStatus | null
+  loginShareBusy: boolean
+
   consults: ConsultState[]
   loop: LoopState
   settingsOpen: boolean
@@ -162,9 +170,12 @@ interface AppStore {
   toast: Toast | null
 
   init: () => Promise<void>
+  applySettings: (next: PublicSettings, options?: { seq?: number; forceReset?: boolean; initial?: boolean }) => Promise<void>
   refreshGoals: () => Promise<void>
   refreshGit: () => Promise<void>
   refreshOmp: () => Promise<void>
+  refreshLoginShare: () => Promise<void>
+  setLoginShare: (enabled: boolean) => Promise<void>
   selectGoal: (goalId: string) => Promise<void>
   toggleTask: (goalId: string, taskId: string, checked: boolean) => Promise<void>
   createGoal: (title: string) => Promise<void>
@@ -176,6 +187,7 @@ interface AppStore {
   sendMessage: (text: string, behavior?: 'steer' | 'followUp') => Promise<void>
   stopActive: () => Promise<void>
   setDraft: (text: string) => void
+  focusComposer: () => void
   setTabModel: (tabId: string, model: string) => Promise<void>
   setTabThinking: (tabId: string, level: ThinkingLevel) => Promise<void>
   newConversation: (tabId: string) => Promise<void>
@@ -196,11 +208,9 @@ interface AppStore {
   toggleRight: () => void
   setPaletteOpen: (open: boolean) => void
   updateSettings: (patch: SettingsPatch) => Promise<void>
-  chooseWorkspace: () => Promise<void>
+  chooseWorkspace: () => Promise<boolean>
   setWorkspaceOpen: (open: boolean) => void
   openWorkspace: (ref: WorkspaceRef) => Promise<void>
-  /** Clears tabs and reloads after the host's omp processes were restarted. */
-  resetWorkspace: () => Promise<void>
   setSettingsOpen: (open: boolean) => void
   pushToast: (kind: Toast['kind'], message: string) => void
   clearToast: () => void
@@ -215,6 +225,11 @@ interface AppStore {
 }
 
 let toastTimer: number | null = null
+let settingsSeq = 0
+let workspaceEpoch = 0
+
+const workspaceKey = (settings: Pick<PublicSettings, 'workspaceHost' | 'workspacePath'> | null): string =>
+  settings ? `${settings.workspaceHost}\u0000${settings.workspacePath}` : ''
 
 export const useAppStore = create<AppStore>((set, get) => {
   const patchTab = (tabId: string, updater: (tab: ChatTab) => ChatTab): void => {
@@ -222,9 +237,31 @@ export const useAppStore = create<AppStore>((set, get) => {
   }
 
   const resetWorkspaceState = async (): Promise<void> => {
-    set({ tabs: [], activeTabId: null, drafts: {}, activeGoalId: null, goalDetail: null, diffPath: null, diff: null, requests: [] })
+    const epoch = workspaceEpoch
+    set({
+      tabs: [],
+      activeTabId: null,
+      drafts: {},
+      goals: [],
+      activeGoalId: null,
+      goalDetail: null,
+      goalLoading: false,
+      designGoalId: null,
+      diffPath: null,
+      diff: null,
+      diffLoading: false,
+      recent: [],
+      recentOpen: false,
+      requests: [],
+      consults: [],
+      loop: emptyLoopState(),
+      git: null,
+      workspaceRevision: get().workspaceRevision + 1
+    })
     await get().refreshGoals()
+    if (workspaceEpoch !== epoch) return
     await get().refreshGit()
+    if (workspaceEpoch !== epoch) return
     await get().createTab({ activate: true })
   }
 
@@ -245,6 +282,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     paletteOpen: false,
     recentOpen: false,
     recent: [],
+    composerFocus: 0,
+    workspaceRevision: 0,
     activeGoalId: null,
     goalDetail: null,
     goalLoading: false,
@@ -254,17 +293,32 @@ export const useAppStore = create<AppStore>((set, get) => {
     diffPath: null,
     diff: null,
     diffLoading: false,
+    loginShare: null,
+    loginShareBusy: false,
     consults: [],
     loop: emptyLoopState(),
     settingsOpen: false,
     workspaceOpen: false,
     toast: null,
 
+    applySettings: async (next, options = {}) => {
+      if (options.seq !== undefined && options.seq !== settingsSeq) return
+      const previousKey = workspaceKey(get().settings)
+      const nextKey = workspaceKey(next)
+      set({ settings: next })
+      if (options.initial) return
+      if (nextKey === previousKey && !options.forceReset) return
+      workspaceEpoch += 1
+      if (nextKey !== previousKey) set({ loginShare: null, loginShareBusy: false })
+      await resetWorkspaceState()
+      if (!isLocalHost(next.workspaceHost)) void get().refreshLoginShare()
+    },
+
     init: async () => {
       try {
         const boot = await window.proharness.bootstrap()
+        await get().applySettings(boot.settings, { initial: true })
         set({
-          settings: boot.settings,
           goals: boot.goals,
           git: boot.git,
           omp: boot.omp,
@@ -274,57 +328,112 @@ export const useAppStore = create<AppStore>((set, get) => {
         set({ loop: await window.proharness.loop.state() })
         if (boot.goals[0]) void get().selectGoal(boot.goals[0].id)
         if (!get().tabs.length) await get().createTab({ activate: true })
+        if (!isLocalHost(boot.settings.workspaceHost)) void get().refreshLoginShare()
       } catch (error) {
         set({ loading: false, bootError: (error as Error).message })
       }
     },
 
     refreshGoals: async () => {
+      const epoch = workspaceEpoch
       try {
-        get().handleGoalsChanged(await window.proharness.goals.list())
+        const goals = await window.proharness.goals.list()
+        if (workspaceEpoch === epoch) get().handleGoalsChanged(goals)
       } catch (error) {
-        get().pushToast('error', (error as Error).message)
+        if (workspaceEpoch === epoch) get().pushToast('error', (error as Error).message)
       }
     },
 
     refreshGit: async () => {
+      const epoch = workspaceEpoch
       try {
-        set({ git: await window.proharness.git.summary() })
+        const git = await window.proharness.git.summary()
+        if (workspaceEpoch === epoch) set({ git })
       } catch (error) {
-        get().pushToast('error', (error as Error).message)
+        if (workspaceEpoch === epoch) get().pushToast('error', (error as Error).message)
       }
     },
 
     refreshOmp: async () => {
+      const epoch = workspaceEpoch
       try {
-        set({ omp: await window.proharness.omp.refresh() })
+        const omp = await window.proharness.omp.refresh()
+        if (workspaceEpoch === epoch) set({ omp })
       } catch (error) {
-        get().pushToast('error', (error as Error).message)
+        if (workspaceEpoch === epoch) get().pushToast('error', (error as Error).message)
+      }
+    },
+
+    refreshLoginShare: async () => {
+      const settings = get().settings
+      if (!settings || isLocalHost(settings.workspaceHost)) {
+        set({ loginShare: null })
+        return
+      }
+      const host = settings.workspaceHost
+      const epoch = workspaceEpoch
+      try {
+        const status = await window.proharness.loginShare.status()
+        if (get().settings?.workspaceHost === host && workspaceEpoch === epoch) set({ loginShare: status })
+      } catch (error) {
+        if (get().settings?.workspaceHost === host && workspaceEpoch === epoch) {
+          set({ loginShare: null })
+          get().pushToast('error', (error as Error).message)
+        }
+      }
+    },
+
+    setLoginShare: async (enabled) => {
+      const settings = get().settings
+      if (!settings || isLocalHost(settings.workspaceHost) || get().loginShareBusy) return
+      const host = settings.workspaceHost
+      const seq = ++settingsSeq
+      set({ loginShareBusy: true })
+      try {
+        const result = await window.proharness.loginShare.set(enabled)
+        if (seq === settingsSeq) {
+          set({ loginShare: result.status })
+          await get().applySettings(result.settings, { seq, forceReset: true })
+          get().pushToast('success', enabled ? `${host} now uses this Mac's logins.` : `${host} uses its own logins again.`)
+        }
+      } catch (error) {
+        if (seq === settingsSeq) {
+          set({ loginShare: null })
+          get().pushToast('error', (error as Error).message)
+        }
+      } finally {
+        set({ loginShareBusy: false })
       }
     },
 
     selectGoal: async (goalId) => {
+      const epoch = workspaceEpoch
       set({ activeGoalId: goalId, goalLoading: true })
       try {
         const detail = await window.proharness.goals.read(goalId)
-        if (get().activeGoalId === goalId) set({ goalDetail: detail, goalLoading: false })
+        if (workspaceEpoch === epoch && get().activeGoalId === goalId) set({ goalDetail: detail, goalLoading: false })
       } catch (error) {
-        set({ goalLoading: false })
-        get().pushToast('error', (error as Error).message)
+        if (workspaceEpoch === epoch && get().activeGoalId === goalId) {
+          set({ goalLoading: false })
+          get().pushToast('error', (error as Error).message)
+        }
       }
     },
 
     toggleTask: async (goalId, taskId, checked) => {
+      const epoch = workspaceEpoch
       try {
         const detail = await window.proharness.goals.toggleTask(goalId, taskId, checked)
-        if (get().activeGoalId === goalId) set({ goalDetail: detail })
+        if (workspaceEpoch === epoch && get().activeGoalId === goalId) set({ goalDetail: detail })
       } catch (error) {
-        get().pushToast('error', (error as Error).message)
+        if (workspaceEpoch === epoch) get().pushToast('error', (error as Error).message)
       }
     },
 
     createGoal: async (title) => {
+      const epoch = workspaceEpoch
       const summary = await window.proharness.goals.create(title)
+      if (workspaceEpoch !== epoch) return
       set({ newGoalOpen: false })
       await get().refreshGoals()
       await get().selectGoal(summary.id)
@@ -337,6 +446,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     createTab: async (options) => {
       const settings = get().settings
       if (!settings) return null
+      const epoch = workspaceEpoch
       const id = makeId('tab')
       const tab: ChatTab = {
         id,
@@ -356,8 +466,13 @@ export const useAppStore = create<AppStore>((set, get) => {
           model: options?.model,
           resumeFile: options?.resumeFile
         })
+        if (workspaceEpoch !== epoch || !get().tabs.some((item) => item.id === id)) {
+          await window.proharness.sessions.close(id).catch(() => undefined)
+          return null
+        }
         return id
       } catch (error) {
+        if (workspaceEpoch !== epoch || !get().tabs.some((item) => item.id === id)) return null
         patchTab(id, (item) => ({
           ...item,
           status: 'error',
@@ -369,6 +484,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     closeTab: async (tabId) => {
+      const epoch = workspaceEpoch
       for (const request of get().requests.filter((item) => item.originId === tabId)) get().clearRequest(request.id)
       set((state) => {
         const index = state.tabs.findIndex((tab) => tab.id === tabId)
@@ -379,7 +495,11 @@ export const useAppStore = create<AppStore>((set, get) => {
         delete drafts[tabId]
         return { tabs, activeTabId, drafts }
       })
-      await window.proharness.sessions.close(tabId).catch(() => undefined)
+      await window.proharness.sessions
+        .close(tabId)
+        .catch((error: Error) => {
+          if (workspaceEpoch === epoch) get().pushToast('error', error.message)
+        })
     },
 
     setActiveTab: (tabId) => set({ activeTabId: tabId }),
@@ -387,9 +507,10 @@ export const useAppStore = create<AppStore>((set, get) => {
     sendMessage: async (rawText, behavior = 'followUp') => {
       const text = rawText.trim()
       if (!text) return
+      const epoch = workspaceEpoch
       let tabId = get().activeTabId
       if (!tabId) tabId = await get().createTab({ activate: true })
-      if (!tabId) return
+      if (!tabId || workspaceEpoch !== epoch) return
       const tab = get().tabs.find((item) => item.id === tabId)
       if (!tab) return
       set((state) => ({ drafts: { ...state.drafts, [tabId]: '' } }))
@@ -399,6 +520,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       try {
         await window.proharness.sessions.send(tabId, text, behavior)
       } catch (error) {
+        if (workspaceEpoch !== epoch || !get().tabs.some((item) => item.id === tabId)) return
         set((state) => ({ drafts: { ...state.drafts, [tabId]: text } }))
         patchTab(tabId, (item) => ({ ...item, messages: [...item.messages, systemMessage((error as Error).message, 'error')] }))
       }
@@ -413,6 +535,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       const id = get().activeTabId
       if (id) set((state) => ({ drafts: { ...state.drafts, [id]: text } }))
     },
+
+    focusComposer: () => set((state) => ({ composerFocus: state.composerFocus + 1 })),
 
     setTabModel: async (tabId, model) => {
       try {
@@ -454,18 +578,26 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     openRecent: async (open) => {
       set({ recentOpen: open })
-      if (open) set({ recent: await window.proharness.sessions.recent().catch(() => []) })
+      if (!open) return
+      const epoch = workspaceEpoch
+      try {
+        const recent = await window.proharness.sessions.recent()
+        if (workspaceEpoch === epoch) set({ recent })
+      } catch (error) {
+        if (workspaceEpoch === epoch) get().pushToast('error', (error as Error).message)
+      }
     },
 
     resumeRecent: async (file, title) => {
       set({ recentOpen: false })
+      const epoch = workspaceEpoch
       const active = get().tabs.find((tab) => tab.id === get().activeTabId)
       if (active && active.messages.length === 0 && active.status === 'idle') {
         patchTab(active.id, (tab) => ({ ...tab, title }))
         try {
           await window.proharness.sessions.resume(active.id, file)
         } catch (error) {
-          get().pushToast('error', (error as Error).message)
+          if (workspaceEpoch === epoch) get().pushToast('error', (error as Error).message)
         }
         return
       }
@@ -582,13 +714,16 @@ export const useAppStore = create<AppStore>((set, get) => {
         set({ diffPath: null, diff: null, diffLoading: false })
         return
       }
+      const epoch = workspaceEpoch
       set({ diffPath: path, diffLoading: true })
       try {
         const diff = await window.proharness.git.fileDiff(path)
-        if (get().diffPath === path) set({ diff, diffLoading: false })
+        if (workspaceEpoch === epoch && get().diffPath === path) set({ diff, diffLoading: false })
       } catch (error) {
-        if (get().diffPath === path) set({ diffLoading: false })
-        get().pushToast('error', (error as Error).message)
+        if (workspaceEpoch === epoch && get().diffPath === path) {
+          set({ diffLoading: false })
+          get().pushToast('error', (error as Error).message)
+        }
       }
     },
 
@@ -608,43 +743,27 @@ export const useAppStore = create<AppStore>((set, get) => {
     setPaletteOpen: (open) => set({ paletteOpen: open }),
 
     updateSettings: async (patch) => {
-      const previousWorkspace = get().settings?.workspacePath
-      try {
-        const next = await window.proharness.settings.update(patch)
-        set({ settings: next })
-        if (previousWorkspace && previousWorkspace !== next.workspacePath) await resetWorkspaceState()
-        get().pushToast('success', 'Settings saved.')
-      } catch (error) {
-        get().pushToast('error', (error as Error).message)
-        throw error
-      }
+      const seq = ++settingsSeq
+      const next = await window.proharness.settings.update(patch)
+      await get().applySettings(next, { seq })
     },
 
     chooseWorkspace: async () => {
-      try {
-        const next = await window.proharness.settings.chooseWorkspace()
-        if (!next) return
-        set({ settings: next })
-        await resetWorkspaceState()
-      } catch (error) {
-        get().pushToast('error', (error as Error).message)
-      }
+      const seq = ++settingsSeq
+      const next = await window.proharness.settings.chooseWorkspace()
+      if (!next) return false
+      await get().applySettings(next, { seq })
+      return seq === settingsSeq
     },
 
     setWorkspaceOpen: (open) => set({ workspaceOpen: open }),
 
     openWorkspace: async (ref) => {
-      try {
-        const next = await window.proharness.workspace.open(ref)
-        set({ settings: next, workspaceOpen: false })
-        await resetWorkspaceState()
-      } catch (error) {
-        get().pushToast('error', (error as Error).message)
-        throw error
-      }
+      const seq = ++settingsSeq
+      const next = await window.proharness.workspace.open(ref)
+      await get().applySettings(next, { seq })
+      if (seq === settingsSeq) set({ workspaceOpen: false })
     },
-
-    resetWorkspace: resetWorkspaceState,
 
     setSettingsOpen: (open) => set({ settingsOpen: open }),
 
@@ -678,7 +797,9 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     cancelConsult: async (requestId) => {
-      await window.proharness.consult.cancel(requestId).catch(() => undefined)
+      await window.proharness.consult
+        .cancel(requestId)
+        .catch((error: Error) => get().pushToast('error', error.message))
     },
 
     handleConsultEvent: (event) => {

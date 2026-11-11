@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUpRight, Brain, Copy, GitCompare, Loader2, Send, Square, Wrench } from 'lucide-react'
-import { providerOf } from '@shared/models'
+import { providerOf, shortModel } from '@shared/models'
 import { useAppStore } from '../store'
-import { formatCost, shortModel } from '../lib/format'
+import { formatCost } from '../lib/format'
 import { Markdown } from './Markdown'
 import { ModelPicker } from './ModelPicker'
 
@@ -13,6 +13,7 @@ export function ConsultPanel(): React.JSX.Element {
   const startConsult = useAppStore((state) => state.startConsult)
   const cancelConsult = useAppStore((state) => state.cancelConsult)
   const setDraft = useAppStore((state) => state.setDraft)
+  const focusComposer = useAppStore((state) => state.focusComposer)
   const git = useAppStore((state) => state.git)
   const [model, setModel] = useState(settings?.reviewerModel || '')
   const [prompt, setPrompt] = useState('')
@@ -21,10 +22,10 @@ export function ConsultPanel(): React.JSX.Element {
   const current = consults[0]
   const running = Boolean(current && !current.done)
 
-  // Reset to the host's reviewer when the workspace host or its catalog changes.
+  // Seed the host's reviewer on host change; catalog refreshes keep the user's draft.
   useEffect(() => {
     setModel(settings?.reviewerModel || '')
-  }, [settings?.workspaceHost, settings?.reviewerModel])
+  }, [settings?.workspaceHost])
 
   useEffect(() => {
     if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight
@@ -106,7 +107,7 @@ export function ConsultPanel(): React.JSX.Element {
                   className="text-link"
                   onClick={() => {
                     setDraft(`A second opinion from ${current.model}:\n\n${current.text}\n\nWhat do you make of this?`)
-                    window.dispatchEvent(new CustomEvent('proharness:focus-composer'))
+                    focusComposer()
                   }}
                 >
                   send to chat <ArrowUpRight size={12} />

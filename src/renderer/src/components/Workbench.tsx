@@ -1,17 +1,10 @@
-import { GitCompare, MessagesSquare, Repeat, Terminal } from 'lucide-react'
 import { isLoopLive } from '@shared/defaults'
-import { useAppStore, type WorkbenchTab } from '../store'
+import { useAppStore } from '../store'
+import { WORKBENCH_TABS } from '../lib/workbenchTabs'
 import { ChangesPanel } from './ChangesPanel'
 import { ConsultPanel } from './ConsultPanel'
 import { LoopPanel } from './LoopPanel'
 import { TerminalPanel } from './TerminalPanel'
-
-const TABS: Array<{ id: WorkbenchTab; label: string; icon: typeof Terminal }> = [
-  { id: 'changes', label: 'Changes', icon: GitCompare },
-  { id: 'loop', label: 'Loop', icon: Repeat },
-  { id: 'consult', label: 'Consult', icon: MessagesSquare },
-  { id: 'terminal', label: 'Shell', icon: Terminal }
-]
 
 export function Workbench(): React.JSX.Element {
   const rightOpen = useAppStore((state) => state.rightOpen)
@@ -24,7 +17,7 @@ export function Workbench(): React.JSX.Element {
   return (
     <aside className={`workbench ${rightOpen ? '' : 'is-collapsed'}`} aria-label="Workbench">
       <div className="workbench__tabs" role="tablist" aria-label="Workbench panels">
-        {TABS.map((tab) => {
+        {WORKBENCH_TABS.map((tab) => {
           const Icon = tab.icon
           const badge = tab.id === 'changes' ? git?.files.length || 0 : 0
           return (

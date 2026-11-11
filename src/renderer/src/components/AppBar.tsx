@@ -1,7 +1,8 @@
 import { FolderOpen, PanelLeft, PanelRight, Server, Settings } from 'lucide-react'
 import { isLoopLive } from '@shared/defaults'
 import { useAppStore } from '../store'
-import { basename, stepLabel } from '../lib/format'
+import { stepLabel } from '../lib/format'
+import { isLocalHost } from '../lib/host'
 
 export function AppBar(): React.JSX.Element {
   const settings = useAppStore((state) => state.settings)
@@ -14,7 +15,7 @@ export function AppBar(): React.JSX.Element {
   const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
   const setWorkspaceOpen = useAppStore((state) => state.setWorkspaceOpen)
   const loopLive = isLoopLive(loop.status)
-  const remote = settings ? settings.workspaceHost !== 'local' : false
+  const remote = Boolean(settings && !isLocalHost(settings.workspaceHost))
 
   return (
     <header className="appbar">
@@ -35,13 +36,7 @@ export function AppBar(): React.JSX.Element {
           title={settings ? `${settings.workspaceHost}:${settings.workspacePath}` : undefined}
         >
           {remote ? <Server size={13} /> : <FolderOpen size={13} />}
-          <span>
-            {settings
-              ? remote
-                ? `${basename(settings.workspacePath)} @ ${settings.workspaceHost}`
-                : basename(settings.workspacePath)
-              : 'workspace'}
-          </span>
+          <span>{settings?.workspaceName || 'workspace'}</span>
         </button>
       </div>
 

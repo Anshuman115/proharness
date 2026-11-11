@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, ChevronDown, Pin, Search } from 'lucide-react'
-import { providerOf } from '@shared/models'
+import { providerOf, shortModel } from '@shared/models'
 import type { ModelInfo } from '@shared/types'
 import { useAppStore } from '../store'
-import { formatTokens, providerLabel, shortModel } from '../lib/format'
+import { formatTokens, providerLabel } from '../lib/format'
 
 interface Props {
   value: string

@@ -5,8 +5,6 @@ import { FitAddon } from '@xterm/addon-fit'
 import type { TerminalCreateResult } from '@shared/types'
 import { useAppStore } from '../store'
 
-const TERMINAL_ID = 'primary'
-
 const THEME = {
   background: '#100f0c',
   foreground: '#e9e2d3',
@@ -31,10 +29,35 @@ const THEME = {
   brightWhite: '#f4eddf'
 }
 
+/** One animation frame, resolvable as false when cleanup cancels it. */
+function nextFrame(): { promise: Promise<boolean>; cancel: () => void } {
+  let frame = 0
+  let settled = false
+  let finish: (value: boolean) => void = () => undefined
+  const promise = new Promise<boolean>((resolve) => {
+    finish = resolve
+    frame = window.requestAnimationFrame(() => {
+      settled = true
+      resolve(true)
+    })
+  })
+  return {
+    promise,
+    cancel: () => {
+      if (settled) return
+      settled = true
+      window.cancelAnimationFrame(frame)
+      finish(false)
+    }
+  }
+}
+
 export function TerminalPanel({ active }: { active: boolean }): React.JSX.Element {
   const settings = useAppStore((state) => state.settings)
   const workspacePath = settings?.workspacePath
+  const workspaceHost = settings?.workspaceHost
   const terminalShell = settings?.terminalShell
+  const workspaceRevision = useAppStore((state) => state.workspaceRevision)
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -45,6 +68,8 @@ export function TerminalPanel({ active }: { active: boolean }): React.JSX.Elemen
   useEffect(() => {
     if (!hostRef.current || !workspacePath) return
     let disposed = false
+    setTerminal(null)
+    const id = `term-${crypto.randomUUID()}`
     const term = new XTerm({
       fontFamily: '"JetBrains Mono", "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace',
       fontSize: 12,
@@ -63,15 +88,13 @@ export function TerminalPanel({ active }: { active: boolean }): React.JSX.Elemen
     fitRef.current = fit
     setError(null)
 
-    const dataDisposable = term.onData((data) => window.proharness.terminal.write(TERMINAL_ID, data))
-    const resizeDisposable = term.onResize(({ cols, rows }) =>
-      window.proharness.terminal.resize(TERMINAL_ID, cols, rows)
-    )
+    const dataDisposable = term.onData((data) => window.proharness.terminal.write(id, data))
+    const resizeDisposable = term.onResize(({ cols, rows }) => window.proharness.terminal.resize(id, cols, rows))
     const offData = window.proharness.terminal.onData((event) => {
-      if (event.id === TERMINAL_ID) term.write(event.data)
+      if (event.id === id) term.write(event.data)
     })
     const offExit = window.proharness.terminal.onExit((event) => {
-      if (event.id !== TERMINAL_ID) return
+      if (event.id !== id) return
       term.write(`\r\n\x1b[38;2;107;98;85m[process exited ${event.exitCode ?? event.signal ?? ''}]\x1b[0m\r\n`)
     })
 
@@ -82,22 +105,28 @@ export function TerminalPanel({ active }: { active: boolean }): React.JSX.Elemen
         // The host may be hidden during a resize.
       }
     }
-    const observer = new ResizeObserver(() => window.requestAnimationFrame(resize))
+    let resizeFrame = 0
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(resizeFrame)
+      resizeFrame = window.requestAnimationFrame(resize)
+    })
     observer.observe(hostRef.current)
 
+    let startFrame: { promise: Promise<boolean>; cancel: () => void } | null = null
     const start = async (): Promise<void> => {
       try {
-        await new Promise((resolve) => window.setTimeout(resolve, 30))
+        startFrame = nextFrame()
+        if (!(await startFrame.promise) || disposed) return
         resize()
         const created = await window.proharness.terminal.create({
-          id: TERMINAL_ID,
+          id,
           cwd: workspacePath,
           cols: term.cols,
           rows: term.rows,
           shell: terminalShell
         })
         if (disposed) {
-          void window.proharness.terminal.kill(TERMINAL_ID)
+          void window.proharness.terminal.kill(id)
           return
         }
         setTerminal(created)
@@ -115,29 +144,31 @@ export function TerminalPanel({ active }: { active: boolean }): React.JSX.Elemen
 
     return () => {
       disposed = true
+      startFrame?.cancel()
+      window.cancelAnimationFrame(resizeFrame)
       observer.disconnect()
       dataDisposable.dispose()
       resizeDisposable.dispose()
       offData()
       offExit()
-      void window.proharness.terminal.kill(TERMINAL_ID)
+      void window.proharness.terminal.kill(id)
       term.dispose()
       termRef.current = null
       fitRef.current = null
     }
-  }, [workspacePath, terminalShell, generation])
+  }, [workspacePath, workspaceHost, terminalShell, generation, workspaceRevision])
 
   useEffect(() => {
     if (!active) return
-    const timer = window.setTimeout(() => {
+    const frame = window.requestAnimationFrame(() => {
       try {
         fitRef.current?.fit()
         termRef.current?.focus()
       } catch {
         // Ignore fit failures while the panel is animating.
       }
-    }, 80)
-    return () => window.clearTimeout(timer)
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [active])
 
   return (
@@ -152,31 +183,16 @@ export function TerminalPanel({ active }: { active: boolean }): React.JSX.Elemen
           </span>
         </div>
         <div className="terminal-head__actions">
-          <button
-            type="button"
-            className="icon-button"
-            title="Clear scrollback"
-            onClick={() => termRef.current?.clear()}
-          >
+          <button type="button" className="icon-button" title="Clear scrollback" onClick={() => termRef.current?.clear()}>
             <Eraser size={13} />
           </button>
-          <button
-            type="button"
-            className="icon-button"
-            title="Restart shell"
-            onClick={() => setGeneration((value) => value + 1)}
-          >
+          <button type="button" className="icon-button" title="Restart shell" onClick={() => setGeneration((value) => value + 1)}>
             <RotateCw size={13} />
           </button>
         </div>
       </div>
       {error ? <div className="terminal-warning">{error}</div> : null}
-      <div
-        className="terminal-host"
-        ref={hostRef}
-        onClick={() => termRef.current?.focus()}
-        onKeyDown={() => termRef.current?.focus()}
-      />
+      <div className="terminal-host" ref={hostRef} onClick={() => termRef.current?.focus()} onKeyDown={() => termRef.current?.focus()} />
       <div className="terminal-foot">
         <span>{terminal?.cwd || settings?.workspacePath}</span>
         <span className="mono">{terminal ? `${terminal.mode} · ${terminal.shell}` : 'connecting'}</span>

@@ -13,6 +13,7 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { WorkspaceDialog } from './components/WorkspaceDialog'
 import { CommandPalette } from './components/CommandPalette'
 import { Toast } from './components/Toast'
+import { workbenchTabByShortcut } from './lib/workbenchTabs'
 
 export default function App(): React.JSX.Element {
   const loading = useAppStore((state) => state.loading)
@@ -35,7 +36,7 @@ export default function App(): React.JSX.Element {
       api.goals.onChanged((goals) => store().handleGoalsChanged(goals)),
       api.git.onChanged((summary) => store().handleGitChanged(summary)),
       api.omp.onChanged((status) => useAppStore.setState({ omp: status })),
-      api.settings.onChanged((settings) => useAppStore.setState({ settings })),
+      api.settings.onChanged((settings) => void store().applySettings(settings)),
       api.sessions.onEvent((tabId, event) => store().handleSessionEvent(tabId, event)),
       api.ui.onRequest((request) => store().addRequest(request)),
       api.ui.onResolved((requestId) => store().clearRequest(requestId)),
@@ -68,8 +69,11 @@ export default function App(): React.JSX.Element {
         event.preventDefault()
         state.toggleRight()
       } else if (key === 'j') {
-        event.preventDefault()
-        state.setWorkbenchTab('terminal')
+        const tab = workbenchTabByShortcut('⌘J')
+        if (tab) {
+          event.preventDefault()
+          state.setWorkbenchTab(tab.id)
+        }
       } else if (/^[3-9]$/.test(key) && !event.shiftKey) {
         const tab = state.tabs[Number(key) - 3]
         if (tab) {

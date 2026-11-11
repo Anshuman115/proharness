@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import { useAppStore } from '../store'
 import { basename } from '../lib/format'
+import { isLocalHost } from '../lib/host'
+import { workbenchTab } from '../lib/workbenchTabs'
 
 interface Action {
   id: string
@@ -27,14 +29,20 @@ export function CommandPalette(): React.JSX.Element | null {
 
   const actions = useMemo<Action[]>(() => {
     const store = useAppStore.getState
+    const panelActions: Action[] = (['loop', 'consult', 'changes', 'terminal'] as const).map((id) => {
+      const meta = workbenchTab(id)
+      return {
+        id: `panel-${meta.id}`,
+        label: meta.actionLabel,
+        hint: meta.shortcut,
+        run: () => store().setWorkbenchTab(meta.id)
+      }
+    })
     const list: Action[] = [
       { id: 'new-tab', label: 'New session', hint: '⌘T', run: () => void store().createTab({ activate: true }) },
       { id: 'resume', label: 'Resume an omp session…', run: () => void store().openRecent(true) },
       { id: 'new-goal', label: 'New goal…', run: () => store().setNewGoalOpen(true) },
-      { id: 'loop', label: 'Open autonomous loop', run: () => store().setWorkbenchTab('loop') },
-      { id: 'consult', label: 'Ask another model', run: () => store().setWorkbenchTab('consult') },
-      { id: 'changes', label: 'Review changes', run: () => store().setWorkbenchTab('changes') },
-      { id: 'shell', label: 'Open shell', hint: '⌘J', run: () => store().setWorkbenchTab('terminal') },
+      ...panelActions,
       { id: 'workspace', label: 'Change workspace…', run: () => store().setWorkspaceOpen(true) },
       { id: 'settings', label: 'Settings', hint: '⌘,', run: () => store().setSettingsOpen(true) },
       { id: 'refresh-omp', label: 'Recheck omp and reload models', run: () => void store().refreshOmp() }
@@ -56,9 +64,12 @@ export function CommandPalette(): React.JSX.Element | null {
     for (const item of recentWorkspaces) {
       list.push({
         id: `workspace-${item.host}-${item.path}`,
-        label: `Open workspace: ${basename(item.path)} ${item.host === 'local' ? '(This Mac)' : `@ ${item.host}`}`,
-        hint: item.host === 'local' ? undefined : item.path,
-        run: () => void store().openWorkspace(item)
+        label: `Open workspace: ${basename(item.path)} ${isLocalHost(item.host) ? '(This Mac)' : `@ ${item.host}`}`,
+        hint: isLocalHost(item.host) ? undefined : item.path,
+        run: () =>
+          void store()
+            .openWorkspace(item)
+            .catch((error: Error) => store().pushToast('error', error.message))
       })
     }
     return list

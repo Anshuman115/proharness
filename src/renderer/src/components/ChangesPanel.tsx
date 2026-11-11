@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '../store'
 import { parseDiff } from '../lib/diff'
+import { isLocalHost } from '../lib/host'
 import type { GitChangeStatus } from '@shared/types'
 
 const STATUS_LABEL: Record<GitChangeStatus, string> = {
@@ -31,7 +32,7 @@ export function ChangesPanel(): React.JSX.Element {
   const loadDiff = useAppStore((state) => state.loadDiff)
   const restoreDiff = useAppStore((state) => state.restoreDiff)
   const refreshGit = useAppStore((state) => state.refreshGit)
-  const remote = useAppStore((state) => Boolean(state.settings && state.settings.workspaceHost !== 'local'))
+  const remote = useAppStore((state) => Boolean(state.settings && !isLocalHost(state.settings.workspaceHost)))
   const [confirmRestore, setConfirmRestore] = useState(false)
   const [copied, setCopied] = useState(false)
 

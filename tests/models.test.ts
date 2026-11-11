@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelInfo } from '../src/shared/types'
-import { resolveModel } from '../src/shared/models'
+import { resolveModel, sameModel, shortModel } from '../src/shared/models'
 
 const model = (key: string): ModelInfo => {
   const slash = key.indexOf('/')
@@ -32,5 +32,34 @@ describe('resolveModel', () => {
   it('handles saved efforts and an empty catalog', () => {
     expect(resolveModel('chat', 'commandcode/deepseek/deepseek-v4.1-flash:high', devbox, null).model).toBe('commandcode/deepseek/deepseek-v4.1-flash:high')
     expect(resolveModel('reviewer', 'anthropic/claude-sonnet-5-5', [], null).model).toBe('anthropic/claude-sonnet-5-5')
+  })
+})
+
+describe('shortModel', () => {
+  it('labels null and empty keys as default', () => {
+    expect(shortModel(null)).toBe('default')
+    expect(shortModel(undefined)).toBe('default')
+    expect(shortModel('')).toBe('default')
+  })
+
+  it('keeps the bare model id and nested tail', () => {
+    expect(shortModel('anthropic/claude-opus-5-5')).toBe('claude-opus-5-5')
+    expect(shortModel('commandcode/deepseek/deepseek-v4.1-flash')).toBe('deepseek-v4.1-flash')
+  })
+
+  it('preserves an effort suffix', () => {
+    expect(shortModel('commandcode/deepseek/deepseek-v4.1-flash:high')).toBe('deepseek-v4.1-flash:high')
+  })
+
+  it('handles a key without a provider', () => {
+    expect(shortModel('claude-opus-5-5')).toBe('claude-opus-5-5')
+  })
+})
+
+describe('sameModel', () => {
+  it('treats the same model across providers as identical', () => {
+    expect(sameModel('anthropic/claude-sonnet-5-5', 'commandcode/claude-sonnet-5-5')).toBe(true)
+    expect(sameModel('commandcode/deepseek/deepseek-v4.1-flash:high', 'opencode-zen/deepseek-v4.1-flash')).toBe(true)
+    expect(sameModel('openai-codex/gpt-6.1-sol', 'anthropic/claude-opus-5-5')).toBe(false)
   })
 })

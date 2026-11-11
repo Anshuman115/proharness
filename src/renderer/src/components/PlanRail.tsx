@@ -17,6 +17,7 @@ export function PlanRail(): React.JSX.Element {
   const setWorkbenchTab = useAppStore((state) => state.setWorkbenchTab)
   const setNewGoalOpen = useAppStore((state) => state.setNewGoalOpen)
   const setDraft = useAppStore((state) => state.setDraft)
+  const focusComposer = useAppStore((state) => state.focusComposer)
   const [collapsedPhases, setCollapsedPhases] = useState<Record<string, boolean>>({})
 
   const useNextTask = (): void => {
@@ -26,7 +27,7 @@ export function PlanRail(): React.JSX.Element {
       ? `Implement task ${next.id} of goal ${detail.id}: ${next.title}. Read goals/${detail.id}/DESIGN.md first, then make the change and verify it.`
       : `Review goals/${detail.id}/PLAN.md and tell me what remains before this goal can be considered complete.`
     setDraft(text)
-    window.dispatchEvent(new CustomEvent('proharness:focus-composer'))
+    focusComposer()
   }
 
   return (
@@ -164,7 +165,7 @@ export function PlanRail(): React.JSX.Element {
                                 setDraft(
                                   `Implement task ${task.id} of goal ${detail.id}: ${task.title}. Read goals/${detail.id}/DESIGN.md first, then make the change and verify it.`
                                 )
-                                window.dispatchEvent(new CustomEvent('proharness:focus-composer'))
+                                focusComposer()
                               }}
                             >
                               <span className="task-id">{task.id}</span>

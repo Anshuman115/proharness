@@ -46,6 +46,14 @@ export function providerOf(key: string): string {
   return key.split('/')[0]
 }
 
+/** The bare model id for labels: `commandcode/deepseek/x:high` → `x:high`. */
+export function shortModel(key: string | null | undefined): string {
+  if (!key) return 'default'
+  const slash = key.indexOf('/')
+  const id = slash > 0 ? key.slice(slash + 1) : key
+  return id.split('/').pop() || id || 'default'
+}
+
 /** True when two `provider/id` model keys refer to the same underlying model family. */
 export function sameModel(a: string, b: string): boolean {
   const strip = (value: string): string =>

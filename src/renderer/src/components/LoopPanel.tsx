@@ -14,9 +14,10 @@ import {
   Wrench
 } from 'lucide-react'
 import { isLoopLive, LOOP_LIMITS } from '@shared/defaults'
+import { shortModel } from '@shared/models'
 import { APPROVAL_MODES, type ApprovalMode, type LoopConfig } from '@shared/types'
 import { useAppStore } from '../store'
-import { approvalHint, approvalLabel, formatClock, formatCost, shortModel, stepLabel } from '../lib/format'
+import { approvalHint, approvalLabel, formatClock, formatCost, stepLabel } from '../lib/format'
 import { Markdown } from './Markdown'
 import { ModelNotes, ModelPicker } from './ModelPicker'
 
@@ -34,6 +35,7 @@ export function LoopPanel(): React.JSX.Element {
   const resumeLoop = useAppStore((state) => state.resumeLoop)
   const stopLoop = useAppStore((state) => state.stopLoop)
   const updateSettings = useAppStore((state) => state.updateSettings)
+  const pushToast = useAppStore((state) => state.pushToast)
   const logRef = useRef<HTMLDivElement>(null)
   const outputRef = useRef<HTMLPreElement>(null)
 
@@ -54,12 +56,12 @@ export function LoopPanel(): React.JSX.Element {
   const progress = total > 0 ? Math.round((committed.length / total) * 100) : 0
   const effectiveImplementer = implementer || omp?.defaultModel || ''
 
-  // Follow the host's effective defaults when the workspace (and so the model catalog) changes.
+  // Follow the host's defaults on host change; catalog refreshes keep the user's edits.
   useEffect(() => {
     setImplementer(settings?.implementerModel || '')
     setReviewer(settings?.reviewerModel || '')
     setApproval(settings?.loopApproval || 'yolo')
-  }, [settings?.workspaceHost, settings?.implementerModel, settings?.reviewerModel, settings?.loopApproval])
+  }, [settings?.workspaceHost])
 
   useEffect(() => {
     if ((!goalId || !goals.some((item) => item.id === goalId)) && (activeGoalId || goals[0])) setGoalId(activeGoalId || goals[0]?.id || '')
@@ -90,7 +92,9 @@ export function LoopPanel(): React.JSX.Element {
     try {
       await startLoop(config)
       setShowForm(false)
-      void updateSettings({ implementerModel: implementer, reviewerModel: reviewer, loopApproval: approval }).catch(() => undefined)
+      void updateSettings({ implementerModel: implementer, reviewerModel: reviewer, loopApproval: approval }).catch((error: Error) =>
+        pushToast('error', error.message)
+      )
     } catch (error) {
       setFormError((error as Error).message)
     } finally {

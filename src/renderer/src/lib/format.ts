@@ -55,18 +55,6 @@ export function approvalHint(mode: string): string {
   }
 }
 
-/** "anthropic/claude-opus-5-5" -> { provider: "anthropic", id: "claude-opus-5-5" } */
-function splitModel(key: string | null | undefined): { provider: string; id: string } {
-  if (!key) return { provider: '', id: '' }
-  const index = key.indexOf('/')
-  return index > 0 ? { provider: key.slice(0, index), id: key.slice(index + 1) } : { provider: '', id: key }
-}
-
-export function shortModel(key: string | null | undefined): string {
-  const { id } = splitModel(key)
-  return id.split('/').pop() || id || 'default'
-}
-
 export function providerLabel(provider: string): string {
   switch (provider) {
     case 'anthropic':
