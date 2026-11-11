@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, Pin, Search } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, Pin, Search } from 'lucide-react'
 import type { ModelInfo } from '@shared/types'
 import { useAppStore } from '../store'
 import { formatTokens, providerLabel, shortModel } from '../lib/format'
@@ -191,6 +191,18 @@ export function ModelPicker({
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+/** Explains which saved models were swapped because the active host does not have them. */
+export function ModelNotes(): React.JSX.Element | null {
+  const notes = useAppStore((state) => state.settings?.modelNotes || [])
+  if (!notes.length) return null
+  return (
+    <div className="loop-warning">
+      <AlertTriangle size={13} />
+      <span>{notes.join(' ')}</span>
     </div>
   )
 }

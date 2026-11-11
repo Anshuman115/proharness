@@ -8,6 +8,7 @@ import type {
   GoalSummary,
   LoopEvent,
   OmpStatus,
+  PublicSettings,
   SessionEvent,
   TerminalDataEvent,
   TerminalExitEvent,
@@ -28,7 +29,8 @@ const api: ProHarnessApi = {
   settings: {
     update: (patch) => ipcRenderer.invoke(CH.settingsUpdate, patch),
     chooseWorkspace: () => ipcRenderer.invoke(CH.settingsChooseWorkspace),
-    chooseOmp: () => ipcRenderer.invoke(CH.settingsChooseOmp)
+    chooseOmp: () => ipcRenderer.invoke(CH.settingsChooseOmp),
+    onChanged: (listener) => subscribe<[PublicSettings]>(CH.settingsChanged, listener)
   },
 
   workspace: {

@@ -17,7 +17,7 @@ import { APPROVAL_MODES, type ApprovalMode, type LoopConfig } from '@shared/type
 import { useAppStore } from '../store'
 import { approvalHint, approvalLabel, formatClock, formatCost, shortModel, stepLabel } from '../lib/format'
 import { Markdown } from './Markdown'
-import { ModelPicker } from './ModelPicker'
+import { ModelNotes, ModelPicker } from './ModelPicker'
 
 const STEPS = ['implementing', 'reviewing', 'committing', 'marking'] as const
 
@@ -52,6 +52,13 @@ export function LoopPanel(): React.JSX.Element {
   const total = committed.length + loop.queue.length + (loop.currentTask && loop.status !== 'complete' ? 1 : 0)
   const progress = total > 0 ? Math.round((committed.length / total) * 100) : 0
   const effectiveImplementer = implementer || omp?.defaultModel || ''
+
+  // Follow the host's effective defaults when the workspace (and so the model catalog) changes.
+  useEffect(() => {
+    setImplementer(settings?.implementerModel || '')
+    setReviewer(settings?.reviewerModel || '')
+    setApproval(settings?.loopApproval || 'yolo')
+  }, [settings?.workspaceHost, settings?.implementerModel, settings?.reviewerModel, settings?.loopApproval])
 
   useEffect(() => {
     if ((!goalId || !goals.some((item) => item.id === goalId)) && (activeGoalId || goals[0])) setGoalId(activeGoalId || goals[0]?.id || '')
@@ -284,6 +291,7 @@ export function LoopPanel(): React.JSX.Element {
             <ModelPicker value={reviewer} onChange={setReviewer} ariaLabel="Reviewer model" align="right" />
           </div>
         </div>
+        <ModelNotes />
         {effectiveImplementer && reviewer && shortModel(effectiveImplementer) === shortModel(reviewer) ? (
           <div className="loop-warning">
             <AlertTriangle size={13} /> Pick a reviewer that is a different model from the implementer.

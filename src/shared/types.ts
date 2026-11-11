@@ -21,6 +21,8 @@ export interface ModelInfo {
 }
 
 export interface OmpStatus {
+  /** Workspace host this catalog came from ('local' or an ssh alias). */
+  hostId: string
   ok: boolean
   path: string | null
   version: string | null
@@ -56,6 +58,13 @@ export interface WorkspaceListing {
   entries: WorkspaceDirEntry[]
 }
 
+/** Model choices remembered per workspace host ('local' or an ssh alias). */
+export interface HostModelPrefs {
+  chatModel: string
+  implementerModel: string
+  reviewerModel: string
+}
+
 export interface PublicSettings {
   workspacePath: string
   workspaceHost: string
@@ -63,10 +72,13 @@ export interface PublicSettings {
   goalsPath: string
   recentWorkspaces: WorkspaceRef[]
   ompPath: string
+  /** Effective models for the active host, already checked against its catalog. */
   chatModel: string
   chatApproval: ApprovalMode
   implementerModel: string
   reviewerModel: string
+  /** Why a saved model was replaced on this host, if it was. */
+  modelNotes: string[]
   loopApproval: ApprovalMode
   pinnedModels: string[]
   terminalShell: string
@@ -74,7 +86,7 @@ export interface PublicSettings {
 }
 
 export type SettingsPatch = Partial<
-  Omit<PublicSettings, 'workspaceName' | 'goalsPath' | 'recentWorkspaces'>
+  Omit<PublicSettings, 'workspaceName' | 'goalsPath' | 'recentWorkspaces' | 'modelNotes'>
 >
 
 export interface Bootstrap {

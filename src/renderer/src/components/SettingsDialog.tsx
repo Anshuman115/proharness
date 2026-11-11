@@ -3,7 +3,7 @@ import { Check, CheckCircle2, FolderOpen, Loader2, Pin, RefreshCw, X, XCircle } 
 import { APPROVAL_MODES, type ApprovalMode, type SettingsPatch } from '@shared/types'
 import { useAppStore } from '../store'
 import { approvalHint, approvalLabel, formatRelative, shortModel } from '../lib/format'
-import { ModelPicker } from './ModelPicker'
+import { ModelNotes, ModelPicker } from './ModelPicker'
 
 export function SettingsDialog(): React.JSX.Element | null {
   const open = useAppStore((state) => state.settingsOpen)
@@ -141,7 +141,11 @@ export function SettingsDialog(): React.JSX.Element | null {
           <section className="settings-section">
             <div className="settings-section__intro">
               <h3>Models</h3>
-              <p>Leave a model empty to use omp's configured default. Each tab can switch models at any time.</p>
+              <p>
+                Saved separately for each host
+                {settings.workspaceHost !== 'local' ? ` (now: ${settings.workspaceHost})` : ' (now: this Mac)'}. Empty means omp's
+                default on that host. Each tab can switch models at any time.
+              </p>
             </div>
             <div className="settings-section__fields">
               <div className="field-row">
@@ -161,6 +165,7 @@ export function SettingsDialog(): React.JSX.Element | null {
                 </div>
               </div>
               <p className="field-hint">{approvalHint(chatApproval)}. Applies to tabs opened after saving.</p>
+              <ModelNotes />
               <div className="field-row">
                 <div className="field field--grow">
                   <label>Loop implementer</label>

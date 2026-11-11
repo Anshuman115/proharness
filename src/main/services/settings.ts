@@ -1,24 +1,26 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, posix } from 'node:path'
 import { app } from 'electron'
+import { DEFAULT_PINNED, emptyPrefs, resolveModel } from '@shared/models'
 import {
   APPROVAL_MODES,
   type ApprovalMode,
+  type HostModelPrefs,
+  type ModelInfo,
   type PublicSettings,
   type SettingsPatch,
   type WorkspaceRef
 } from '@shared/types'
 
 interface StoredSettings {
-  version: 2
+  version: 3
   workspacePath: string
   workspaceHost: string
   recentWorkspaces: WorkspaceRef[]
   ompPath: string
-  chatModel: string
+  /** Model choices per host id. */
+  models: Record<string, HostModelPrefs>
   chatApproval: ApprovalMode
-  implementerModel: string
-  reviewerModel: string
   loopApproval: ApprovalMode
   pinnedModels: string[]
   terminalShell: string
@@ -27,8 +29,18 @@ interface StoredSettings {
 
 const MAX_RECENT_WORKSPACES = 12
 
-/** Shown first in model pickers. Everything else omp knows stays searchable. */
-export const DEFAULT_PINNED = [
+
+function cleanPrefs(value: unknown): HostModelPrefs {
+  const raw = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>
+  return {
+    chatModel: cleanModel(raw.chatModel),
+    implementerModel: cleanModel(raw.implementerModel),
+    reviewerModel: cleanModel(raw.reviewerModel)
+  }
+}
+
+/** The v2 default pins, before the Command Code equivalents were added. */
+const V2_DEFAULT_PINS = [
   'anthropic/claude-opus-5-5',
   'anthropic/claude-sonnet-5-5',
   'anthropic/claude-haiku-5-5',
@@ -37,6 +49,14 @@ export const DEFAULT_PINNED = [
   'openai-codex/gpt-6-luna',
   'commandcode/deepseek/deepseek-v4.1-flash'
 ]
+
+function migratePins(value: unknown, defaults: string[]): string[] {
+  if (!Array.isArray(value)) return defaults
+  const pins = value.map(cleanModel).filter(Boolean)
+  // Untouched old defaults move to the new defaults; customised lists stay as they are.
+  const untouched = pins.length === V2_DEFAULT_PINS.length && pins.every((pin, index) => pin === V2_DEFAULT_PINS[index])
+  return untouched ? defaults : pins
+}
 
 function readJson<T>(file: string): T | null {
   try {
@@ -82,15 +102,13 @@ export class SettingsService {
 
   private defaults(): StoredSettings {
     return {
-      version: 2,
+      version: 3,
       workspacePath: this.defaultWorkspace(),
       workspaceHost: 'local',
       recentWorkspaces: [],
       ompPath: process.env.PROHARNESS_OMP || '',
-      chatModel: '',
+      models: { local: { ...emptyPrefs(), reviewerModel: 'anthropic/claude-sonnet-5-5' } },
       chatApproval: 'write',
-      implementerModel: '',
-      reviewerModel: 'anthropic/claude-sonnet-5-5',
       loopApproval: 'yolo',
       pinnedModels: [...DEFAULT_PINNED],
       terminalShell: process.env.SHELL || '/bin/zsh',
@@ -111,7 +129,7 @@ export class SettingsService {
       typeof stored.workspacePath === 'string' &&
       (workspaceHost !== 'local' || existsSync(stored.workspacePath))
     return {
-      version: 2,
+      version: 3,
       workspacePath: workspace ? (stored.workspacePath as string) : defaults.workspacePath,
       workspaceHost,
       recentWorkspaces: Array.isArray(stored.recentWorkspaces)
@@ -121,17 +139,58 @@ export class SettingsService {
             .slice(0, MAX_RECENT_WORKSPACES)
         : defaults.recentWorkspaces,
       ompPath: typeof stored.ompPath === 'string' ? stored.ompPath : defaults.ompPath,
-      chatModel: cleanModel(stored.chatModel),
+      models: this.loadModels(stored, defaults.models),
       chatApproval: approval(stored.chatApproval, defaults.chatApproval),
-      implementerModel: cleanModel(stored.implementerModel),
-      reviewerModel: cleanModel(stored.reviewerModel) || defaults.reviewerModel,
       loopApproval: approval(stored.loopApproval, defaults.loopApproval),
-      pinnedModels: Array.isArray(stored.pinnedModels)
-        ? (stored.pinnedModels as unknown[]).map(cleanModel).filter(Boolean)
-        : defaults.pinnedModels,
+      pinnedModels: migratePins(stored.pinnedModels, defaults.pinnedModels),
       terminalShell: typeof stored.terminalShell === 'string' && stored.terminalShell ? stored.terminalShell : defaults.terminalShell,
       reduceMotion: Boolean(stored.reduceMotion)
     }
+  }
+
+  /** Reads per-host prefs; settings from before v3 keep their flat fields as the local prefs. */
+  private loadModels(stored: Record<string, unknown>, defaults: Record<string, HostModelPrefs>): Record<string, HostModelPrefs> {
+    const models: Record<string, HostModelPrefs> = {}
+    if (stored.models && typeof stored.models === 'object') {
+      for (const [host, prefs] of Object.entries(stored.models as Record<string, unknown>)) {
+        if (host.trim()) models[host] = cleanPrefs(prefs)
+      }
+    }
+    if (!models.local) {
+      const legacy = cleanPrefs(stored)
+      models.local = {
+        ...legacy,
+        reviewerModel: legacy.reviewerModel || defaults.local.reviewerModel
+      }
+    }
+    return models
+  }
+
+  /** Saved prefs for a host, without catalog checks. */
+  prefsFor(host: string = this.settings.workspaceHost): HostModelPrefs {
+    return { ...emptyPrefs(), ...(this.settings.models[host] || {}) }
+  }
+
+  /** Effective models on the active host; set by the omp catalog. */
+  private resolved: (HostModelPrefs & { notes: string[] }) | null = null
+
+  /** Checks the active host's saved models against its catalog and remembers the result. */
+  resolveFor(models: ModelInfo[], hostDefault: string | null): HostModelPrefs & { notes: string[] } {
+    const saved = this.prefsFor()
+    const chat = resolveModel('chat', saved.chatModel, models, hostDefault)
+    const implementer = resolveModel('implementer', saved.implementerModel, models, hostDefault)
+    const reviewer = resolveModel('reviewer', saved.reviewerModel, models, hostDefault)
+    this.resolved = {
+      chatModel: chat.model,
+      implementerModel: implementer.model,
+      reviewerModel: reviewer.model,
+      notes: [chat.note, implementer.note, reviewer.note].filter((note): note is string => Boolean(note))
+    }
+    return this.resolved
+  }
+
+  private effective(): HostModelPrefs & { notes: string[] } {
+    return this.resolved || { ...this.prefsFor(), notes: [] }
   }
 
   private persist(): void {
@@ -156,16 +215,16 @@ export class SettingsService {
     return this.settings.ompPath
   }
   get chatModel(): string {
-    return this.settings.chatModel
+    return this.effective().chatModel
   }
   get chatApproval(): ApprovalMode {
     return this.settings.chatApproval
   }
   get implementerModel(): string {
-    return this.settings.implementerModel
+    return this.effective().implementerModel
   }
   get reviewerModel(): string {
-    return this.settings.reviewerModel
+    return this.effective().reviewerModel
   }
   get loopApproval(): ApprovalMode {
     return this.settings.loopApproval
@@ -186,10 +245,11 @@ export class SettingsService {
       goalsPath: remote ? posix.join(this.workspacePath, 'goals') : join(this.workspacePath, 'goals'),
       recentWorkspaces: this.settings.recentWorkspaces.map((item) => ({ ...item })),
       ompPath: this.settings.ompPath,
-      chatModel: this.settings.chatModel,
+      chatModel: this.effective().chatModel,
       chatApproval: this.settings.chatApproval,
-      implementerModel: this.settings.implementerModel,
-      reviewerModel: this.settings.reviewerModel,
+      implementerModel: this.effective().implementerModel,
+      reviewerModel: this.effective().reviewerModel,
+      modelNotes: [...this.effective().notes],
       loopApproval: this.settings.loopApproval,
       pinnedModels: [...this.settings.pinnedModels],
       terminalShell: this.settings.terminalShell,
@@ -204,6 +264,7 @@ export class SettingsService {
     if (!path || (host === 'local' && (!existsSync(path) || !statSync(path).isDirectory()))) {
       throw new Error('Workspace folder does not exist.')
     }
+    if (host !== this.settings.workspaceHost) this.resolved = null
     this.settings.workspaceHost = host
     this.settings.workspacePath = path
     this.settings.recentWorkspaces = [
@@ -220,19 +281,37 @@ export class SettingsService {
       if (!next || !existsSync(next) || !statSync(next).isDirectory()) {
         throw new Error('Workspace folder does not exist.')
       }
+      if (this.settings.workspaceHost !== 'local') this.resolved = null
       this.settings.workspacePath = next
       this.settings.workspaceHost = 'local'
     }
-    if (patch.workspaceHost !== undefined && patch.workspaceHost.trim()) {
+    if (patch.workspaceHost !== undefined && patch.workspaceHost.trim() && patch.workspaceHost.trim() !== this.settings.workspaceHost) {
       this.settings.workspaceHost = patch.workspaceHost.trim()
+      this.resolved = null
     }
     if (patch.ompPath !== undefined) this.settings.ompPath = patch.ompPath.trim()
-    if (patch.chatModel !== undefined) this.settings.chatModel = cleanModel(patch.chatModel)
-    if (patch.chatApproval !== undefined) this.settings.chatApproval = approval(patch.chatApproval, this.settings.chatApproval)
-    if (patch.implementerModel !== undefined) this.settings.implementerModel = cleanModel(patch.implementerModel)
-    if (patch.reviewerModel !== undefined && cleanModel(patch.reviewerModel)) {
-      this.settings.reviewerModel = cleanModel(patch.reviewerModel)
+    // Model choices belong to the active host.
+    const host = this.settings.workspaceHost
+    const prefs = this.prefsFor(host)
+    let modelsChanged = false
+    if (patch.chatModel !== undefined) {
+      prefs.chatModel = cleanModel(patch.chatModel)
+      modelsChanged = true
     }
+    if (patch.implementerModel !== undefined) {
+      prefs.implementerModel = cleanModel(patch.implementerModel)
+      modelsChanged = true
+    }
+    if (patch.reviewerModel !== undefined && cleanModel(patch.reviewerModel)) {
+      prefs.reviewerModel = cleanModel(patch.reviewerModel)
+      modelsChanged = true
+    }
+    if (modelsChanged) {
+      this.settings.models = { ...this.settings.models, [host]: prefs }
+      // A choice the user just made is valid by definition; drop stale notes.
+      if (this.resolved) this.resolved = { ...prefs, notes: [] }
+    }
+    if (patch.chatApproval !== undefined) this.settings.chatApproval = approval(patch.chatApproval, this.settings.chatApproval)
     if (patch.loopApproval !== undefined) this.settings.loopApproval = approval(patch.loopApproval, this.settings.loopApproval)
     if (patch.pinnedModels !== undefined) {
       this.settings.pinnedModels = [...new Set(patch.pinnedModels.map(cleanModel).filter(Boolean))]

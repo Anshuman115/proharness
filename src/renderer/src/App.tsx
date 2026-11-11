@@ -35,6 +35,7 @@ export default function App(): React.JSX.Element {
       api.goals.onChanged((goals) => store().handleGoalsChanged(goals)),
       api.git.onChanged((summary) => store().handleGitChanged(summary)),
       api.omp.onChanged((status) => useAppStore.setState({ omp: status })),
+      api.settings.onChanged((settings) => useAppStore.setState({ settings })),
       api.sessions.onEvent((tabId, event) => store().handleSessionEvent(tabId, event)),
       api.ui.onRequest((request) => store().addRequest(request)),
       api.ui.onResolved((requestId) => store().clearRequest(requestId)),

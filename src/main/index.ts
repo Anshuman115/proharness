@@ -88,7 +88,18 @@ if (!gotLock) {
     )
     consult.setEmitter((event) => send(CH.consultEvent, event))
     loop.setEmitter((event) => send(CH.loopEvent, event))
-    omp.onChange((status) => send(CH.ompChanged, status))
+    // Re-check this host's saved model choices whenever its catalog changes.
+    const applyCatalog = (): void => {
+      const status = omp.current()
+      if (status.hostId !== settings.workspaceHost) return
+      settings.resolveFor(status.models, status.defaultModel)
+      send(CH.settingsChanged, settings.publicSettings())
+    }
+    omp.onChange((status) => {
+      send(CH.ompChanged, status)
+      applyCatalog()
+    })
+    applyCatalog()
     plan.onChange((goals) => send(CH.goalsChanged, goals))
     git.onChanged((summary) => send(CH.gitChanged, summary))
 

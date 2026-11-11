@@ -20,9 +20,10 @@ export function ConsultPanel(): React.JSX.Element {
   const current = consults[0]
   const running = Boolean(current && !current.done)
 
+  // Reset to the host's reviewer when the workspace host or its catalog changes.
   useEffect(() => {
-    if (!model && settings?.reviewerModel) setModel(settings.reviewerModel)
-  }, [settings?.reviewerModel, model])
+    setModel(settings?.reviewerModel || '')
+  }, [settings?.workspaceHost, settings?.reviewerModel])
 
   useEffect(() => {
     if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight

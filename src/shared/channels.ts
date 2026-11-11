@@ -8,6 +8,7 @@ export const CH = {
   workspaceListDir: 'workspace:list-dir',
   ompRefresh: 'omp:refresh',
   ompChanged: 'omp:changed',
+  settingsChanged: 'settings:changed',
   goalsList: 'goals:list',
   goalsInit: 'goals:init',
   goalsCreate: 'goals:create',

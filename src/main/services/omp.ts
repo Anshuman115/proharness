@@ -49,7 +49,8 @@ export class OmpService {
     private readonly cacheFile: string,
     private readonly activeHost: () => WorkspaceHost
   ) {
-    this.status = this.readCache(this.cachePath('local'))
+    const hostId = activeHost().id
+    this.status = this.readCache(this.cachePath(hostId), hostId)
   }
 
   private cachePath(hostId: string): string {
@@ -57,16 +58,16 @@ export class OmpService {
     return this.cacheFile.replace(/\.json$/, `-${hostId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`)
   }
 
-  private readCache(file: string): OmpStatus {
+  private readCache(file: string, hostId: string): OmpStatus {
     try {
       if (existsSync(file)) {
         const cached = JSON.parse(readFileSync(file, 'utf8')) as OmpStatus
-        if (Array.isArray(cached.models)) return { ...cached, ok: false, error: null }
+        if (Array.isArray(cached.models)) return { ...cached, hostId, ok: false, error: null }
       }
     } catch {
       // Rebuild below.
     }
-    return { ok: false, path: null, version: null, error: null, defaultModel: null, models: [], checkedAt: 0 }
+    return { hostId, ok: false, path: null, version: null, error: null, defaultModel: null, models: [], checkedAt: 0 }
   }
 
   private writeCache(file: string, status: OmpStatus): void {
@@ -131,7 +132,7 @@ export class OmpService {
     const run = (previous ? previous.catch(() => this.status) : Promise.resolve(this.status))
       .then(() => this.load())
       .catch((error) =>
-        this.publish({ ...this.status, ok: false, error: (error as Error).message, checkedAt: Date.now() })
+        this.publish({ ...this.status, hostId, ok: false, error: (error as Error).message, checkedAt: Date.now() })
       )
     this.refreshing = run
     this.refreshingHost = hostId
@@ -147,9 +148,10 @@ export class OmpService {
     const host = this.activeHost()
     const local = host.kind === 'local'
     const env = local ? await shellEnv() : {}
-    const base: OmpStatus = local
-      ? this.status
-      : { ...this.readCache(this.cachePath(host.id)), ok: false, error: null }
+    const base: OmpStatus =
+      this.status.hostId === host.id ? this.status : this.readCache(this.cachePath(host.id), host.id)
+    // Show the host's last known catalog right away; the probe below refreshes it.
+    if (this.status.hostId !== host.id) this.publish({ ...base, ok: false, error: null })
     let path: string
     try {
       path = await this.binary(host)
@@ -182,6 +184,7 @@ export class OmpService {
       const parsed = list.map(modelFromJson).filter((item): item is ModelInfo => item !== null)
       const current = state?.model as Json | undefined
       const status: OmpStatus = {
+        hostId: host.id,
         ok: true,
         path: displayPath,
         version,
@@ -207,6 +210,9 @@ export class OmpService {
   }
 
   private publish(status: OmpStatus): OmpStatus {
+    // Stamp the host so a catalog is never applied to another host's settings.
+    status = { ...status, hostId: status.hostId || this.activeHost().id }
+    if (status.hostId !== this.activeHost().id) return status
     this.status = status
     for (const listener of this.listeners) listener(status)
     return status

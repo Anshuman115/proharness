@@ -36,6 +36,7 @@ export interface ProHarnessApi {
     update(patch: SettingsPatch): Promise<PublicSettings>
     chooseWorkspace(): Promise<PublicSettings | null>
     chooseOmp(): Promise<string | null>
+    onChanged(listener: (settings: PublicSettings) => void): Unsubscribe
   }
 
   workspace: {
