@@ -1,18 +1,8 @@
 import { useState } from 'react'
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  FolderOpen,
-  Play,
-  RefreshCw,
-  Sparkles
-} from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, EyeOff, FileText, Play, Plus, Sparkles } from 'lucide-react'
 import { useAppStore } from '../store'
 import { stepLabel } from '../lib/format'
 
-const shortcutModifier = navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+Shift'
 
 export function PlanRail(): React.JSX.Element {
   const leftOpen = useAppStore((state) => state.leftOpen)
@@ -25,7 +15,7 @@ export function PlanRail(): React.JSX.Element {
   const toggleTask = useAppStore((state) => state.toggleTask)
   const setDesignGoal = useAppStore((state) => state.setDesignGoal)
   const setWorkbenchTab = useAppStore((state) => state.setWorkbenchTab)
-  const refreshGoals = useAppStore((state) => state.refreshGoals)
+  const setNewGoalOpen = useAppStore((state) => state.setNewGoalOpen)
   const setDraft = useAppStore((state) => state.setDraft)
   const [collapsedPhases, setCollapsedPhases] = useState<Record<string, boolean>>({})
 
@@ -33,7 +23,7 @@ export function PlanRail(): React.JSX.Element {
     if (!detail) return
     const next = detail.phases.flatMap((phase) => phase.tasks).find((task) => !task.checked)
     const text = next
-      ? `Implement task ${next.id} — ${next.title}. Read goals/${detail.id}/DESIGN.md and goals/${detail.id}/PLAN.md first, then make the change and verify it.`
+      ? `Implement task ${next.id} of goal ${detail.id}: ${next.title}. Read goals/${detail.id}/DESIGN.md first, then make the change and verify it.`
       : `Review goals/${detail.id}/PLAN.md and tell me what remains before this goal can be considered complete.`
     setDraft(text)
     window.dispatchEvent(new CustomEvent('proharness:focus-composer'))
@@ -43,11 +33,13 @@ export function PlanRail(): React.JSX.Element {
     <aside className={`rail ${leftOpen ? '' : 'is-collapsed'}`} aria-label="Project plan">
       <div className="rail__head">
         <div>
-          <p className="eyebrow">Project plan</p>
+          <p className="eyebrow">
+            <EyeOff size={10} /> local, not in git
+          </p>
           <h2>Goals</h2>
         </div>
-        <button type="button" className="icon-button" onClick={() => void refreshGoals()} title="Refresh goals">
-          <RefreshCw size={14} />
+        <button type="button" className="icon-button" onClick={() => setNewGoalOpen(true)} title="New goal">
+          <Plus size={15} />
         </button>
       </div>
 
@@ -56,19 +48,11 @@ export function PlanRail(): React.JSX.Element {
           <div className="rail-empty">
             <p>No goals yet.</p>
             <p className="muted">
-              Add <code>goals/&lt;name&gt;/DESIGN.md</code> and <code>PLAN.md</code> to this workspace.
+              A goal is <code>goals/&lt;name&gt;/DESIGN.md</code> plus a phased <code>PLAN.md</code> checklist. The folder
+              stays out of git.
             </p>
-            <button
-              type="button"
-              className="btn btn--quiet btn--sm"
-              onClick={() => {
-                void window.proharness.goals
-                  .init()
-                  .then((path) => window.proharness.shell.openPath(path))
-                  .catch(() => undefined)
-              }}
-            >
-              <FolderOpen size={13} /> Create goals folder
+            <button type="button" className="btn btn--quiet btn--sm" onClick={() => setNewGoalOpen(true)}>
+              <Plus size={13} /> New goal
             </button>
           </div>
         ) : (
@@ -178,7 +162,7 @@ export function PlanRail(): React.JSX.Element {
                               title={task.title}
                               onClick={() => {
                                 setDraft(
-                                  `Implement task ${task.id} — ${task.title}. Read goals/${detail.id}/DESIGN.md and goals/${detail.id}/PLAN.md first, then make the change and verify it.`
+                                  `Implement task ${task.id} of goal ${detail.id}: ${task.title}. Read goals/${detail.id}/DESIGN.md first, then make the change and verify it.`
                                 )
                                 window.dispatchEvent(new CustomEvent('proharness:focus-composer'))
                               }}
@@ -215,8 +199,7 @@ export function PlanRail(): React.JSX.Element {
           </button>
         ) : (
           <p className="rail__hint">
-            <span className="kbd">↵</span> send · <span className="kbd">{shortcutModifier}</span>
-            <span className="kbd">T</span> new tab · <span className="kbd">esc</span> close dialogs
+            <span className="kbd">⌘T</span> tab <span className="kbd">⌘K</span> commands <span className="kbd">esc</span> stop
           </p>
         )}
       </div>

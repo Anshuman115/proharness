@@ -44,7 +44,8 @@ export class TerminalService {
 
   constructor(
     private readonly workspace: () => string,
-    private readonly defaultShell: () => string
+    private readonly defaultShell: () => string,
+    private readonly baseEnv: () => NodeJS.ProcessEnv = () => process.env
   ) {
     try {
       this.ptyModule = require('@homebridge/node-pty-prebuilt-multiarch') as PtyModule
@@ -83,7 +84,7 @@ export class TerminalService {
     }
     const shell = input.shell || this.defaultShell() || '/bin/bash'
     const env = {
-      ...process.env,
+      ...this.baseEnv(),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       PROHARNESS_TERMINAL: '1'
@@ -91,7 +92,7 @@ export class TerminalService {
 
     if (this.ptyModule) {
       try {
-        const pty = this.ptyModule.spawn(shell, [], {
+        const pty = this.ptyModule.spawn(shell, ['-l'], {
           name: 'xterm-256color',
           cols: Math.max(20, input.cols || 100),
           rows: Math.max(5, input.rows || 30),

@@ -1,105 +1,65 @@
-export const PROVIDER_IDS = ['openai', 'deepseek', 'kimi'] as const
-export type ProviderId = (typeof PROVIDER_IDS)[number]
+// ── omp runtime ──────────────────────────────────────────────────────────────
 
-export const PROVIDER_LABELS: Record<ProviderId, string> = {
-  openai: 'OpenAI',
-  deepseek: 'DeepSeek',
-  kimi: 'Kimi'
+/** omp tool approval modes, see `tools.approvalMode` in omp docs. */
+export const APPROVAL_MODES = ['always-ask', 'always-ask-cached', 'write', 'yolo'] as const
+export type ApprovalMode = (typeof APPROVAL_MODES)[number]
+
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number]
+
+export interface ModelInfo {
+  /** `provider/id`, the form omp accepts for `--model`. */
+  key: string
+  provider: string
+  id: string
+  name: string
+  contextWindow: number | null
+  reasoning: boolean
+  efforts: string[]
+  costIn: number | null
+  costOut: number | null
 }
 
-export const DEFAULT_PROVIDER_BASE_URLS: Record<ProviderId, string> = {
-  openai: 'https://api.openai.com/v1',
-  deepseek: 'https://api.deepseek.com/v1',
-  kimi: 'https://api.moonshot.ai/v1'
+export interface OmpStatus {
+  ok: boolean
+  path: string | null
+  version: string | null
+  error: string | null
+  defaultModel: string | null
+  models: ModelInfo[]
+  checkedAt: number
 }
 
-export const DEFAULT_PROVIDER_MODELS: Record<ProviderId, string> = {
-  openai: 'gpt-5.1',
-  deepseek: 'deepseek-chat',
-  kimi: 'kimi-k2-0905-preview'
+export interface SlashCommand {
+  name: string
+  description: string
+  hint: string
 }
 
-export type PermissionMode =
-  | 'default'
-  | 'acceptEdits'
-  | 'plan'
-  | 'auto'
-  | 'dontAsk'
-  | 'bypassPermissions'
-
-export type SessionStatus =
-  | 'starting'
-  | 'thinking'
-  | 'streaming'
-  | 'waiting_permission'
-  | 'idle'
-  | 'stopping'
-  | 'error'
-
-export type SessionKind = 'chat' | 'loop'
-
-export interface ProviderPublic {
-  id: ProviderId
-  label: string
-  baseUrl: string
-  model: string
-  hasKey: boolean
-  keyHint: string
-  envKey: boolean
-}
-
-export interface ClaudePublic {
-  model: string
-  permissionMode: PermissionMode
-  hasApiKey: boolean
-  apiKeyHint: string
-  envKey: boolean
-  executablePath: string
-  claudeCodeVersion: string | null
-}
+// ── Settings ─────────────────────────────────────────────────────────────────
 
 export interface PublicSettings {
   workspacePath: string
   workspaceName: string
   goalsPath: string
-  claude: ClaudePublic
-  providers: ProviderPublic[]
+  ompPath: string
+  chatModel: string
+  chatApproval: ApprovalMode
+  implementerModel: string
+  reviewerModel: string
+  loopApproval: ApprovalMode
+  pinnedModels: string[]
   terminalShell: string
-  defaultReviewer: ProviderId
-  defaultReviewerModel: string
   reduceMotion: boolean
 }
 
-export interface SettingsPatch {
-  workspacePath?: string
-  claude?: {
-    model?: string
-    permissionMode?: PermissionMode
-    apiKey?: string
-    clearApiKey?: boolean
-    executablePath?: string
-  }
-  providers?: Partial<
-    Record<
-      ProviderId,
-      {
-        baseUrl?: string
-        model?: string
-        apiKey?: string
-        clearApiKey?: boolean
-      }
-    >
-  >
-  terminalShell?: string
-  defaultReviewer?: ProviderId
-  defaultReviewerModel?: string
-  reduceMotion?: boolean
-}
+export type SettingsPatch = Partial<Omit<PublicSettings, 'workspaceName' | 'goalsPath'>>
 
 export interface Bootstrap {
   settings: PublicSettings
   goals: GoalSummary[]
   git: GitSummary
+  omp: OmpStatus
   appVersion: string
   platform: string
 }
@@ -180,6 +140,7 @@ export interface GitSummary {
   behind: number
   files: GitFileChange[]
   clean: boolean
+  head: string | null
 }
 
 export interface GitFileDiff {
@@ -190,108 +151,123 @@ export interface GitFileDiff {
   truncated: boolean
 }
 
+export interface GitCommitInfo {
+  hash: string
+  subject: string
+  author: string
+  ts: number
+}
+
 // ── Chat sessions ────────────────────────────────────────────────────────────
 
-export interface AssistantTextBlock {
+export interface TextBlock {
   type: 'text'
   text: string
 }
 
-export interface AssistantThinkingBlock {
+export interface ThinkingBlock {
   type: 'thinking'
   text: string
 }
 
-export interface AssistantToolBlock {
-  type: 'tool_use'
+export interface ToolBlock {
+  type: 'tool'
   id: string
   name: string
-  input: Record<string, unknown>
-  result?: string
-  isError?: boolean
+  intent: string
+  args: Record<string, unknown>
+  /** Streaming or final output text. */
+  output?: string
+  status: 'pending' | 'running' | 'done' | 'error'
 }
 
-export type AssistantBlock = AssistantTextBlock | AssistantThinkingBlock | AssistantToolBlock
+export type ContentBlock = TextBlock | ThinkingBlock | ToolBlock
+
+export type SessionStatus = 'starting' | 'idle' | 'working' | 'stopping' | 'error' | 'closed'
+
+export interface TodoItem {
+  content: string
+  status: string
+}
+
+export interface TodoPhase {
+  name: string
+  tasks: TodoItem[]
+}
+
+export interface SessionSnapshot {
+  model: string | null
+  thinking: string | null
+  sessionId: string | null
+  sessionFile: string | null
+  contextPercent: number | null
+  contextTokens: number | null
+  contextWindow: number | null
+  todos: TodoPhase[]
+  queue: { steering: string[]; followUp: string[] }
+  costUsd: number
+}
 
 export interface SessionCreateInput {
   tabId: string
-  cwd?: string
   title: string
   model?: string
-  permissionMode?: PermissionMode
-  kind?: SessionKind
+  thinking?: ThinkingLevel
+  approval?: ApprovalMode
+  /** Resume an existing omp session file. */
+  resumeFile?: string
 }
 
-export interface SessionRuntime {
-  tabId: string
-  sdkSessionId: string | null
-  cwd: string
-  model: string
-  permissionMode: PermissionMode
-  kind: SessionKind
-  createdAt: number
-}
-
-export interface SessionResultMeta {
-  costUsd: number
-  durationMs: number
-  numTurns: number
-  isError: boolean
-  resultText: string
+export interface RecentSession {
+  file: string
+  title: string
+  updatedAt: number
+  model: string | null
 }
 
 export type SessionEvent =
   | { type: 'status'; status: SessionStatus; detail?: string }
-  | {
-      type: 'init'
-      sdkSessionId: string
-      model: string
-      cwd: string
-      tools: string[]
-      mcpServers: string[]
-      apiKeySource: string
-    }
-  | { type: 'message_start'; messageId: string }
-  | { type: 'delta'; messageId: string; block: 'text' | 'thinking'; text: string }
-  | { type: 'message'; messageId: string; blocks: AssistantBlock[] }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError: boolean }
+  | { type: 'snapshot'; snapshot: SessionSnapshot }
+  | { type: 'commands'; commands: SlashCommand[] }
+  | { type: 'message_start'; messageId: string; model: string | null }
+  | { type: 'block'; messageId: string; index: number; block: ContentBlock }
+  | { type: 'delta'; messageId: string; index: number; text: string }
+  | { type: 'message_end'; messageId: string; blocks: ContentBlock[]; costUsd: number; error: string | null }
+  | { type: 'tool'; toolId: string; status: ToolBlock['status']; output?: string }
+  | { type: 'user'; text: string }
+  | { type: 'history'; messages: HistoryMessage[] }
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string }
-  | { type: 'result'; meta: SessionResultMeta }
-  | { type: 'error'; message: string }
+  | { type: 'turn_end'; status: 'completed' | 'aborted' | 'error'; error?: string }
 
-// ── Permissions ──────────────────────────────────────────────────────────────
+export interface HistoryMessage {
+  role: 'user' | 'assistant'
+  blocks: ContentBlock[]
+  model: string | null
+}
 
-export type PermissionRisk = 'low' | 'medium' | 'high'
+// ── Interactive requests from omp (approvals, ask tool, extension dialogs) ───
 
-export interface PermissionRequest {
+export interface UiRequest {
+  /** ProHarness id, unique across all omp processes. */
   id: string
   origin: 'session' | 'loop'
   originId: string
   originLabel: string
-  toolName: string
-  toolUseId: string
+  method: 'select' | 'confirm' | 'input' | 'editor'
   title: string
-  displayName: string
-  description: string
-  decisionReason: string | null
-  blockedPath: string | null
-  input: Record<string, unknown>
-  risk: PermissionRisk
-  canRemember: boolean
-  defaultToNo: boolean
+  message: string
+  options: string[]
+  optionDetails: string[]
+  placeholder: string
+  /** True when this select is an omp tool approval prompt. */
+  approval: { tool: string; details: string[] } | null
   createdAt: number
 }
 
-export interface PermissionDecision {
-  requestId: string
-  allow: boolean
-  remember: boolean
-  message?: string
-}
-
-export type PermissionOutcome =
-  | { allow: true; remember: boolean }
-  | { allow: false; message: string }
+export type UiResponse =
+  | { requestId: string; value: string }
+  | { requestId: string; confirmed: boolean }
+  | { requestId: string; cancelled: true }
 
 // ── Terminal ─────────────────────────────────────────────────────────────────
 
@@ -322,40 +298,21 @@ export interface TerminalExitEvent {
   signal: string | null
 }
 
-// ── Delegation ───────────────────────────────────────────────────────────────
+// ── Consult (one-shot second opinion) ────────────────────────────────────────
 
-export interface DelegateRequest {
-  provider: ProviderId
-  model?: string
-  system?: string
-  prompt: string
-  temperature?: number
-  maxTokens?: number
-}
-
-export interface DelegateUsage {
-  promptTokens: number | null
-  completionTokens: number | null
-  totalTokens: number | null
-}
-
-export type DelegateEvent =
-  | { type: 'delta'; requestId: string; text: string; reasoning?: string }
-  | { type: 'done'; requestId: string; text: string; model: string; usage: DelegateUsage | null }
-  | { type: 'error'; requestId: string; message: string }
-
-export interface ProviderTestOverrides {
-  baseUrl?: string
-  model?: string
-  apiKey?: string
-}
-
-export interface ProviderTestResult {
-  ok: boolean
-  message: string
-  latencyMs: number
+export interface ConsultRequest {
   model: string
+  prompt: string
+  /** Attach the current working-tree diff to the prompt. */
+  includeDiff: boolean
 }
+
+export type ConsultEvent =
+  | { type: 'delta'; requestId: string; text: string }
+  | { type: 'thinking'; requestId: string; text: string }
+  | { type: 'tool'; requestId: string; label: string }
+  | { type: 'done'; requestId: string; text: string; costUsd: number }
+  | { type: 'error'; requestId: string; message: string }
 
 // ── Task loop ────────────────────────────────────────────────────────────────
 
@@ -375,25 +332,26 @@ export type LoopStep =
 
 export interface LoopConfig {
   goalId: string
-  reviewerProvider: ProviderId
+  implementerModel: string
   reviewerModel: string
-  autoApproveTools: boolean
+  approval: ApprovalMode
   maxTasks: number
   maxReviewRounds: number
   pauseBetweenMs: number
-  commit: boolean
-  permissionMode: PermissionMode
 }
+
+export type Verdict = 'APPROVE' | 'REQUEST_CHANGES'
 
 export interface LoopTaskRecord {
   taskId: string
   taskTitle: string
   phaseTitle: string
-  status: 'pending' | 'running' | 'reviewing' | 'revising' | 'committed' | 'failed'
+  status: 'running' | 'reviewing' | 'revising' | 'committed' | 'failed'
   attempts: number
-  reviewVerdict: 'APPROVE' | 'REQUEST_CHANGES' | null
+  reviewVerdict: Verdict | null
   reviewNotes: string | null
   commitHash: string | null
+  costUsd: number
   startedAt: number
   finishedAt: number | null
   error: string | null
@@ -417,26 +375,16 @@ export interface LoopState {
   completed: LoopTaskRecord[]
   log: LoopLogEntry[]
   liveOutput: string
+  liveTool: string | null
   startedAt: number | null
   finishedAt: number | null
   error: string | null
-  review: { verdict: 'APPROVE' | 'REQUEST_CHANGES'; notes: string; provider: string; model: string } | null
+  review: { verdict: Verdict; summary: string; notes: string; model: string } | null
+  costUsd: number
 }
 
 export type LoopEvent =
   | { type: 'state'; state: LoopState }
   | { type: 'log'; entry: LoopLogEntry }
   | { type: 'delta'; text: string }
-  | { type: 'step'; step: LoopStep; task: TaskRef | null }
-
-// ── IPC plumbing ─────────────────────────────────────────────────────────────
-
-export interface AppInfo {
-  version: string
-  platform: string
-  electron: string
-  chrome: string
-  node: string
-  claudeCodeVersion: string | null
-  nodePtyAvailable: boolean
-}
+  | { type: 'tool'; label: string | null }

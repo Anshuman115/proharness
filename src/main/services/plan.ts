@@ -258,6 +258,55 @@ export class PlanService {
     }
   }
 
+  /** Scaffolds goals/<slug>/ with a DESIGN.md and an empty phase in PLAN.md. */
+  createGoal(title: string): GoalSummary {
+    const clean = title.replace(/\s+/g, ' ').trim()
+    if (!clean) throw new Error('Give the goal a title.')
+    const base =
+      clean
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || 'goal'
+    this.ensureRoot()
+    let id = base
+    for (let n = 2; existsSync(join(this.goalsRoot, id)); n += 1) id = `${base}-${n}`
+    const dir = join(this.goalsRoot, id)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'DESIGN.md'),
+      [
+        '---',
+        'status: draft',
+        '---',
+        `# ${clean}`,
+        '',
+        'One paragraph on what this goal delivers and why.',
+        '',
+        '## Scope',
+        '',
+        '- In: ',
+        '- Out: ',
+        '',
+        '## Approach',
+        '',
+        'Key decisions, interfaces, and risks.',
+        ''
+      ].join('\n'),
+      'utf8'
+    )
+    writeFileSync(
+      join(dir, 'PLAN.md'),
+      [`# ${clean} — plan`, '', '## Phase 1 — Foundation', '', '- [ ] **1.1** First task', ''].join('\n'),
+      'utf8'
+    )
+    this.resetWatching()
+    this.emitChanged()
+    const summary = this.listGoals().find((goal) => goal.id === id)
+    if (!summary) throw new Error('The goal was created but could not be read back.')
+    return summary
+  }
+
   ensureGoal(goalId: string): string {
     if (!GOAL_ID_RE.test(goalId)) throw new Error('Invalid goal id.')
     const dir = resolve(this.goalsRoot, goalId)

@@ -1,19 +1,22 @@
-import { app, BrowserWindow, session, shell } from 'electron'
+import { app, BrowserWindow, Menu, session, shell } from 'electron'
 import { join } from 'node:path'
 import { CH } from '@shared/channels'
 import { registerIpc } from './ipc'
-import { ClaudeService } from './services/claude'
+import { shellEnv } from './omp/env'
+import { AgentFactory } from './services/agents'
+import { ConsultService } from './services/consult'
 import { GitService } from './services/git'
-import { PermissionBroker } from './services/permissions'
+import { OmpService } from './services/omp'
 import { PlanService } from './services/plan'
-import { ProviderService } from './services/providers'
 import { SessionManager } from './services/sessions'
 import { SettingsService } from './services/settings'
 import { TaskLoopService } from './services/task-loop'
 import { TerminalService } from './services/terminal'
+import { UiBroker } from './services/ui-broker'
 
 let mainWindow: BrowserWindow | null = null
-let cleanup: (() => void) | null = null
+let cleanup: (() => Promise<void>) | null = null
+let windowHook: ((window: BrowserWindow) => void) | undefined
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -25,96 +28,153 @@ if (!gotLock) {
     mainWindow.focus()
   })
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     app.setName('ProHarness')
-    app.setAppUserModelId('dev.proharness.app')
-
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(permission === 'clipboard-sanitized-write')
     })
 
+    const dataDir = app.getPath('userData')
+    let resolvedEnv: NodeJS.ProcessEnv = process.env
+    void shellEnv().then((env) => {
+      resolvedEnv = env
+    })
+
     const settings = new SettingsService()
+    const omp = new OmpService(
+      () => settings.ompPath,
+      () => settings.workspacePath,
+      join(dataDir, 'omp-status.json')
+    )
     const plan = new PlanService(() => settings.workspacePath)
     const git = new GitService(() => settings.workspacePath)
-    const providers = new ProviderService(settings)
-    const permissions = new PermissionBroker()
-    const claude = new ClaudeService(permissions)
-    const sessions = new SessionManager(settings, claude, plan, git, providers)
+    const broker = new UiBroker()
+    const sessions = new SessionManager(settings, omp, plan, git, broker, dataDir)
+    const agents = new AgentFactory(settings, omp, plan, git, broker, () => sessions.overlayPath)
+    const consult = new ConsultService(agents, git)
     const terminal = new TerminalService(
       () => settings.workspacePath,
-      () => settings.terminalShell
+      () => settings.terminalShell,
+      () => resolvedEnv
     )
-    const loop = new TaskLoopService(settings, plan, git, providers, claude)
+    const loop = new TaskLoopService(plan, git, agents)
 
     const send = (channel: string, ...args: unknown[]): void => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
     }
 
-    providers.setEmitter((event) => send(CH.delegateEvent, event))
     sessions.setEmitter((tabId, event) => send(CH.sessionEvent, tabId, event))
-    permissions.setEmitters(
-      (request) => send(CH.permissionRequest, request),
-      (requestId, allow) => send(CH.permissionResolved, requestId, allow)
+    broker.setEmitters(
+      (request) => send(CH.uiRequest, request),
+      (requestId) => send(CH.uiResolved, requestId)
     )
     terminal.setEmitter(
       (event) => send(CH.terminalData, event),
       (event) => send(CH.terminalExit, event)
     )
+    consult.setEmitter((event) => send(CH.consultEvent, event))
     loop.setEmitter((event) => send(CH.loopEvent, event))
+    omp.onChange((status) => send(CH.ompChanged, status))
     plan.onChange((goals) => send(CH.goalsChanged, goals))
     git.onChanged((summary) => send(CH.gitChanged, summary))
 
     registerIpc({
       getWindow: () => mainWindow,
+      appVersion: app.getVersion(),
       settings,
+      omp,
       plan,
       git,
-      providers,
       sessions,
-      permissions,
+      broker,
       terminal,
+      consult,
       loop
     })
 
-    createWindow()
+    buildMenu()
+    createWindow((window) => {
+      // A reload or crash orphans every tab, so close their omp processes.
+      window.webContents.on('did-start-navigation', (details) => {
+        if (details.isMainFrame && !details.isSameDocument) {
+          broker.cancelAll()
+          void sessions.dispose()
+        }
+      })
+      window.webContents.on('render-process-gone', () => {
+        broker.cancelAll()
+        void sessions.dispose()
+      })
+    })
+    void omp.refresh()
 
-    cleanup = (): void => {
-      permissions.denyAll('The application is closing.')
-      providers.dispose()
+    cleanup = async (): Promise<void> => {
+      broker.cancelAll()
+      consult.dispose()
       loop.dispose()
-      sessions.dispose()
       terminal.dispose()
       plan.dispose()
       git.dispose()
+      await sessions.dispose()
     }
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(windowHook)
   })
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
+    app.quit()
   })
 
-  app.on('before-quit', () => {
-    cleanup?.()
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+    process.on(signal, () => app.quit())
+  }
+
+  let quitting = false
+  app.on('before-quit', (event) => {
+    if (quitting || !cleanup) return
+    event.preventDefault()
+    quitting = true
+    const run = cleanup
     cleanup = null
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5_000))
+    void Promise.race([run(), timeout]).finally(() => app.quit())
   })
 }
 
-function createWindow(): void {
-  const isMac = process.platform === 'darwin'
+function buildMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload', visible: !app.isPackaged },
+        { role: 'toggleDevTools', visible: !app.isPackaged },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    { role: 'windowMenu' }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+function createWindow(onCreate?: (window: BrowserWindow) => void): void {
   mainWindow = new BrowserWindow({
-    width: 1510,
-    height: 940,
+    width: 1520,
+    height: 960,
     minWidth: 1080,
     minHeight: 680,
     show: false,
-    backgroundColor: '#0c0b09',
+    backgroundColor: '#100f0d',
     title: 'ProHarness',
-    titleBarStyle: isMac ? 'hiddenInset' : 'default',
-    trafficLightPosition: isMac ? { x: 18, y: 18 } : undefined,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 16, y: 15 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -124,27 +184,21 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
-  })
-
+  onCreate?.(mainWindow)
+  windowHook = onCreate || windowHook
+  mainWindow.once('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => {
     mainWindow = null
   })
-
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
-
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const current = mainWindow?.webContents.getURL()
     if (current && url !== current) event.preventDefault()
   })
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  if (process.env.ELECTRON_RENDERER_URL) void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+  else void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
 }

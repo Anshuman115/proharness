@@ -151,7 +151,7 @@ export function ChangesPanel(): React.JSX.Element {
                       type="button"
                       className="icon-button"
                       title="Reveal in folder"
-                      onClick={() => void window.proharness.git.reveal(diffPath)}
+                      onClick={() => void window.proharness.shell.showItem(diffPath)}
                     >
                       <ExternalLink size={13} />
                     </button>

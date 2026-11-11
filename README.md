@@ -1,261 +1,112 @@
 # ProHarness
 
-A Linux desktop control room for Claude Code. Tabbed streaming sessions, visible permissions, a real
-shell, git diff review, cross-model delegation, markdown goals, and an autonomous task loop that
-implements → reviews → commits → checks off → repeats.
+ProHarness is a macOS desktop app for [Oh My Pi](https://omp.sh) (`omp`). It runs your existing omp setup (providers, logins, skills, extensions, `AGENTS.md`) in tabs, and adds a markdown plan plus an autonomous loop that works through the plan one reviewed commit at a time.
 
-Built with **Electron + React + TypeScript** on top of the **Claude Agent SDK**. Planning lives in
-`goals/<goal>/DESIGN.md` and `PLAN.md`; agents read and update it through an in-process MCP tool, not
-through raw filesystem access.
+It does not have its own agent. Every session, implementer, reviewer, and consult is an `omp --mode rpc` process.
 
-![ProHarness workbench](docs/proharness.png)
+![ProHarness running a session on DeepSeek V4.1 Flash](docs/proharness.png)
 
-## What is in the app
+## What it adds on top of omp
 
-- **Tabbed sessions** — each tab is an independent Claude Agent SDK conversation with `resume`,
-  streaming partial messages, tool-call input/output, thinking traces, cost, stop, and its own
-  permission mode.
-- **Permission dialogs** — allow once, always allow (SDK rule), deny. Risk-labelled, origin-aware,
-  fail-closed. Loop-originated requests are labelled.
-- **Embedded terminal** — xterm.js with a PTY (`@homebridge/node-pty-prebuilt-multiarch`, which ships
-  N-API prebuilds for Linux x64/arm64) rooted at the workspace. If the native module cannot load, it
-  degrades to a pipe shell and says so in the UI.
-- **Diff review** — branch/ahead/behind, per-file stats, unified diff with line numbers, untracked
-  files, copy, reveal, and a two-step restore for tracked files.
-- **Cross-model delegation** — OpenAI, DeepSeek, and Kimi over OpenAI-compatible streaming
-  endpoints. Manual panel plus agent-callable MCP tools.
-- **Goal planning** — `goals/<id>/DESIGN.md` + `PLAN.md`, parsed into phases and checklists. Edit
-  in git or let an agent check tasks off.
-- **Autonomous loop** — preflight clean tree, pick next task, implement with Claude, review the
-  diff with a different model, revise on rejection, commit, check off, commit the plan, repeat.
+- **Tabs.** Each tab is a separate omp process. Switch model and reasoning effort per tab, queue follow-ups while it works (Return) or steer it (⌘Return), stop with Esc, compact, start fresh, or resume any omp session saved for the folder, including ones started in the terminal.
+- **Approvals.** omp's approval prompts, `ask` tool questions and extension dialogs appear as native dialogs. The default chat mode lets edits run and asks before shell commands.
+- **Plans.** `goals/<goal>/DESIGN.md` and a phased `PLAN.md` checklist. The rail shows progress, and agents read and update the plan through host tools (`plan_list`, `plan_read`, `plan_next_task`, `plan_complete_task`, `plan_add_note`, `git_status`).
+- **Autonomous loop.** It picks the next open task, implements it, has a different model review the diff, sends findings back (with a cap on rounds), commits the code, and checks the task off.
+- **Consult.** Ask any model a read-only question about the repo, optionally with the current diff attached.
+- **Workbench.** Git changes with per-file diffs and restore, a real PTY shell, and the loop's live output.
+
+### goals/ never reaches git
+
+The first time you create a goal or start the loop, ProHarness adds `/goals/` to `.git/info/exclude`. This is a local ignore: it leaves your shared `.gitignore` untouched. The Changes panel, review diffs and loop commits all leave `goals/` out, and the loop checks tasks off without committing the plan. If `goals/` was already tracked, run `git rm -r --cached goals` once.
 
 ## Requirements
 
-- Node.js 22+ (developed with Node 26)
-- pnpm 11+ (or npm with equivalent commands)
-- Linux for packaging; macOS works for development
-- A git repository as the workspace
-- Claude Code login (`~/.claude`) **or** `ANTHROPIC_API_KEY`
-- At least one API key for OpenAI / DeepSeek / Kimi to use delegation or the autonomous loop
+- macOS 13 or later on Apple silicon.
+- `omp` installed and logged in to at least one provider (`omp` → `/login`). ProHarness finds it on your login-shell `PATH`, or you can set the path in Settings.
+- `git`.
 
-## Quick start
+## Run from source
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev          # Electron with hot reload
+pnpm test         # unit + loop tests (no network)
+pnpm test:live    # a real omp turn and a real one-task loop (DeepSeek V4.1 Flash builds, Claude Sonnet 5.5 reviews)
+pnpm dist:mac     # release/ProHarness-<version>-arm64.dmg and -mac.zip
 ```
 
-`pnpm install` also ensures the Electron binary is present (`scripts/postinstall.cjs`). If Electron
-was installed with build scripts disabled, run:
+Override with `PROHARNESS_LIVE_MODEL`, `PROHARNESS_LIVE_IMPLEMENTER` and `PROHARNESS_LIVE_REVIEWER` (all `provider/id`).
 
-```bash
-node node_modules/electron/install.js
-```
+The packaged app is ad-hoc signed. On first launch, right-click the app and choose Open. To sign with a Developer ID, set `CSC_LINK` and `CSC_KEY_PASSWORD` and remove `identity: null` from `electron-builder.yml`.
 
-Set a workspace on first launch. In development the app defaults to this repository. Pick any git
-repository with a `goals/` folder.
+## Models
 
-### API keys
+The model list comes from `omp` (`get_available_models`), so it matches whatever you have logged in. Pinned models appear first in every picker; the defaults are Claude Opus/Sonnet/Haiku 5.5, GPT-6.1 Sol/Terra, GPT-6 Luna, and DeepSeek V4.1 Flash via Command Code. Change them in Settings.
 
-Keys can be set in **Settings → Delegation models**, or supplied through the environment:
+| Role | Default |
+| --- | --- |
+| Chat tabs | omp's configured default (`modelRoles.default`) |
+| Loop implementer | omp's configured default |
+| Reviewer and consult | `anthropic/claude-sonnet-5-5` |
 
-| Provider | Environment variable | Default endpoint | Default model |
-| --- | --- | --- | --- |
-| OpenAI | `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-5.1` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| Kimi | `MOONSHOT_API_KEY` or `KIMI_API_KEY` | `https://api.moonshot.ai/v1` | `kimi-k2-0905-preview` |
-
-Claude authentication uses the Claude Code login unless `ANTHROPIC_API_KEY` is set. Keys entered in
-the UI are encrypted with Electron `safeStorage` (OS keychain where available) and never returned to
-the renderer. The renderer only receives `hasKey` and a masked hint.
-
-> The app does not sandbox the shell. Treat permission dialogs and the loop's auto-approval warning
-> as safety controls, not decoration.
+The loop refuses to start when the implementer and reviewer are the same model.
 
 ## Goal format
 
-```text
-goals/
-  proharness-desktop/
-    DESIGN.md
-    PLAN.md
 ```
-
-`DESIGN.md` explains intent and architecture. `PLAN.md` is a checklist grouped by phases:
+goals/
+  checkout-redesign/
+    DESIGN.md   # optional `status:` frontmatter, then the design
+    PLAN.md     # phases and tasks
+```
 
 ```md
 ## Phase 1 — Foundation
-
-- [x] **1.1** Electron shell and typed bridge
-- [ ] **1.2** Next task
+- [ ] **1.1** Add the cart service
+- [ ] **1.2** Wire the API route
+  - notes are indented bullets under a task
 ```
 
-- Every `##` heading starts a phase.
-- Every `- [ ]` / `- [x]` line is a task.
-- A bold id (`**1.2**`) is stable. Without one the parser derives `p<phase>-t<index>`.
-- Indented `-` notes below a task are read as completion notes.
-- The UI can check/uncheck a task; the write is atomic and preserves the rest of the file.
+Use **New goal** in the rail to create a goal. With a brief, the active session writes the design and a phased plan for you.
 
-The plan rail is the source of truth for the loop. The loop always takes the first unchecked task in
-file order.
+## The loop
 
-## MCP tools exposed to Claude
+1. Preflight: the goal has open tasks, the folder is a git repo, the tree is clean outside `goals/`, and the reviewer differs from the implementer.
+2. One persistent implementer omp session runs the whole loop, so later tasks keep the earlier context. It does not get the `plan_complete_task` tool.
+3. Review: a fresh, read-only omp process (`read`, `grep` and `glob` only, no extensions) gets the task, the design, and the diff. It must end with `VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES`; anything else counts as a rejection.
+4. Rejections go back to the implementer, up to the revision limit. After that the loop stops, leaves the diff in place, and commits nothing.
+5. On approval: `git add -A` (with `goals/` excluded), one commit per task with `Reviewed-by:` in the message, then the task is checked off in PLAN.md.
+6. If the tree changes between tasks, the loop stops rather than fold unrelated work into a commit.
 
-The app registers an in-process `proharness` MCP server with every session:
-
-| Tool | Purpose |
-| --- | --- |
-| `plan_list` | List goals, progress, open counts |
-| `plan_read` | Read one goal's design + plan, or all goals |
-| `plan_next_task` | First unchecked task with design/plan paths |
-| `plan_complete_task` | Check off a task (after verification) |
-| `plan_add_note` | Append a progress note under a task |
-| `git_status` | Branch + changed files |
-| `delegate_model` | Ask OpenAI / DeepSeek / Kimi |
-| `review_changes` | Another model reviews the working-tree diff |
-
-The plan and `git_status` tools run without a prompt because they only touch the local plan and read
-git state. `delegate_model` and `review_changes` send repository content to a third-party API, so they
-go through the normal permission dialog. Inside the autonomous loop, `plan_complete_task` is disabled
-for the implementer: the loop owns the commit and the checkoff.
-
-## Autonomous task loop
-
-Open **Workbench → Loop**, choose a goal and a reviewer provider, then start.
-
-```text
-preflight ─→ implementing ─→ reviewing ──APPROVE──→ committing ─→ checking off ─→ next task
-                   ▲              │
-                   └── revising ──┘   REQUEST_CHANGES (bounded rounds)
-```
-
-Safety behavior:
-
-1. **Preflight** refuses a dirty git worktree, a missing reviewer key, or a goal with no open tasks.
-2. **Implement** runs Claude with the task prompt, resuming one SDK session per task.
-3. **Review** sends the actual git diff (not the agent's summary) to the reviewer model.
-4. **Revise** feeds findings back to the same Claude session, up to the configured round limit.
-5. **Commit** only after a parsed `VERDICT: APPROVE`. The implementation commit is separate from the
-   plan commit.
-6. **Check off** updates `PLAN.md`, then commits that change.
-7. **Repeat** until the run limit, no tasks, pause, stop, or an error.
-
-If review rejects after the revision limit, the loop halts, leaves the diff intact, and commits
-nothing. If the implementer produces no changes, the loop fails. Reviewer output without a
-machine-readable verdict is treated as `REQUEST_CHANGES`.
-
-Auto-approve is explicit. With it on, the implementer can run shell commands without a dialog; the
-independent review and commit gate still apply, and Stop aborts the in-flight action.
+**Implementer approvals** decides what the loop may do without asking. The default, *Never ask*, runs without prompts, but omp's critical-command guard still applies. Any prompt pauses the loop until you answer it.
 
 ## Architecture
 
-```text
-src/
-  shared/                 types + IPC channels + preload API contract
-  main/
-    index.ts              window, services, event wiring
-    ipc.ts                validated ipcMain handlers
-    services/
-      settings.ts         settings, encrypted secrets, env fallbacks
-      plan.ts             goals parser/watcher/atomic writes
-      git.ts              status, diff, restore, commit
-      claude.ts           Agent SDK query loop + event normalization
-      sessions.ts         tab runtime, resume, stop, allow-lists
-      permissions.ts      promise-based permission broker
-      mcp.ts              in-process proharness MCP server
-      providers.ts        OpenAI-compatible streaming + test
-      review.ts           review prompt + fail-closed verdict parser
-      terminal.ts         PTY with pipe fallback
-      task-loop.ts        autonomous state machine
-  preload/index.ts        contextBridge API
-  renderer/src/           React UI (Zustand)
+```
+src/main/omp/rpc.ts         JSONL transport: request/response ids, protocol v2 chunking, lifecycle
+src/main/omp/agent.ts       one omp process: events → SessionEvent, dialogs, host tools, runTurn()
+src/main/omp/translate.ts   pure mapping from omp payloads to view models
+src/main/omp/env.ts         login-shell env (GUI apps get launchd's PATH) and omp discovery
+src/main/services/          sessions, task loop, review parsing, plan, git, consult, settings, terminal
+src/renderer/               React + Zustand UI
 ```
 
-The renderer has no Node integration. `contextIsolation` is on, `nodeIntegration` is off. The main
-process owns all filesystem, git, secret, process, and network access.
+Host tools are registered with `set_host_tools`, and a generated config overlay lets them run without a prompt. Dialogs are `extension_ui_request` frames answered through the UI broker. Each tab runs `--mode rpc-ui` so the `ask` tool works.
 
-## Keyboard shortcuts
+## Shortcuts
 
-On Linux the shortcuts use **Ctrl+Shift** so plain Ctrl keys (Ctrl+W, Ctrl+T, Ctrl+B in the shell)
-keep working in the terminal and text fields. On macOS they use **⌘**.
-
-| Shortcut | Action |
+| Keys | Action |
 | --- | --- |
-| Ctrl+Shift+T | New session tab |
-| Ctrl+Shift+W | Close session tab |
-| Ctrl+Shift+, | Settings |
-| Ctrl+Shift+J | Toggle plan rail |
-| Ctrl+Shift+B | Toggle workbench |
-
-## Scripts
-
-```bash
-pnpm dev          # Electron + Vite dev server
-pnpm typecheck    # main + renderer TypeScript
-pnpm build        # typecheck + production build to out/
-pnpm dist:linux   # build AppImage + .deb into release/
-pnpm dist:dir     # unpacked Linux directory
-pnpm test         # unit tests (plan, diff, review, git, providers, task loop)
-```
-
-## Packaging Linux
-
-```bash
-pnpm dist:linux
-```
-
-Outputs `release/ProHarness-*.AppImage` and `release/proharness_*.deb` for Linux x64. The config
-lives in `electron-builder.yml`. Set the target architecture explicitly with `--arm64` (and stage an
-arm64 Claude binary) if you need ARM64 Linux.
-
-The build is cross-platform-aware. `scripts/fetch-linux-sdk.mjs` downloads the matching Linux
-Claude Code binary into `.cache/linux-sdk/` (about 326 MB), and `scripts/after-pack.cjs` copies it
-to `resources/claude` in the packaged app. On Linux, pnpm's optional dependency resolution normally
-provides the binary itself. The download is verified against the SHA-256 checksum in the Agent SDK's
-`manifest.json`. The PTY package and its prebuilds are unpacked from the asar so the native module can
-load; the app also keeps a pipe-shell fallback.
-
-The AppImage and `.deb` are built and structurally verified on macOS. Launching the AppImage on a
-real Linux desktop is the remaining hardening task in `goals/proharness-desktop/PLAN.md`.
+| ⌘T / ⌘W | New / close tab |
+| ⌘K | Command palette: actions, switch model, jump to a tab or goal |
+| ⌘1 / ⌘2 | Toggle plan rail / workbench |
+| ⌘3–⌘9, ⇧⌘[ ⇧⌘] | Switch tabs |
+| ⌘J | Shell |
+| Return / ⌘Return | Send or queue / steer while working |
+| Esc | Stop the active turn; deny an approval |
 
 ## Troubleshooting
 
-**The window opens but no goals appear.**
-`goals/` must exist under the selected workspace and each goal folder needs `DESIGN.md`. Use
-**Open goals folder** in the plan rail.
-
-**The loop won't start.**
-It requires a clean worktree and a configured reviewer. Commit your current work first. A dirty tree
-is rejected so the loop cannot accidentally commit unrelated files.
-
-**Claude fails to start.**
-Run `claude --version` in a terminal. If you use API-key auth, set `ANTHROPIC_API_KEY` or enter a key
-in Settings. The Agent SDK also honors a custom executable path in Settings.
-
-**The terminal says `pipe`.**
-The PTY module could not load or could not open a pseudo-terminal (for example inside a restrictive
-sandbox). Reinstall dependencies so `@homebridge/node-pty-prebuilt-multiarch` places its prebuild. The
-app remains usable, but full-screen programs will not work.
-
-**Delegation returns 401/404.**
-Check the provider base URL (including `/v1` where required), model id, and key. Use the **Test**
-button in Settings; it does a real small completion.
-
-**The loop halted with changes intact.**
-That is intentional. Review the diff in **Changes**, then either fix it manually, ask a chat session
-to address the reviewer findings, or discard the changes. Nothing was committed.
-
-## Known limitations
-
-- Session transcripts are in memory for the app process; tabs do not survive a restart yet.
-- The loop works one task at a time in one goal; no multi-goal queue yet.
-- The loop commits locally only. It never pushes.
-- Provider streaming assumes OpenAI-compatible SSE. Native Anthropic / Gemini delegate protocols are
-  out of scope.
-- Auto-update is not wired up.
-- The AppImage has not been launched on a real Linux desktop in this environment; the `.deb` and
-  AppImage payloads are built and inspected. See `goals/proharness-desktop/PLAN.md` task 7.5.
-
-## License
-
-MIT.
+- **omp not ready**: open Settings and click Recheck. The error names the missing binary or the startup failure. Set the omp path explicitly if it lives outside your login `PATH`.
+- **No models**: log in inside omp, then click Recheck.
+- **Resume says another workspace**: omp records each session's folder, and ProHarness only resumes sessions from the current workspace.

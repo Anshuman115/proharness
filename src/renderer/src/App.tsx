@@ -6,9 +6,11 @@ import { PlanRail } from './components/PlanRail'
 import { ChatPanel } from './components/ChatPanel'
 import { Workbench } from './components/Workbench'
 import { StatusBar } from './components/StatusBar'
-import { PermissionDialog } from './components/PermissionDialog'
+import { RequestDialog } from './components/RequestDialog'
 import { GoalDesignDialog } from './components/GoalDesignDialog'
+import { NewGoalDialog } from './components/NewGoalDialog'
 import { SettingsDialog } from './components/SettingsDialog'
+import { CommandPalette } from './components/CommandPalette'
 import { Toast } from './components/Toast'
 
 export default function App(): React.JSX.Element {
@@ -17,7 +19,6 @@ export default function App(): React.JSX.Element {
   const settings = useAppStore((state) => state.settings)
   const leftOpen = useAppStore((state) => state.leftOpen)
   const rightOpen = useAppStore((state) => state.rightOpen)
-
   const bootStarted = useRef(false)
 
   useEffect(() => {
@@ -27,80 +28,75 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const store = useAppStore.getState()
-    const offGoals = window.proharness.goals.onChanged((goals) => store.handleGoalsChanged(goals))
-    const offGit = window.proharness.git.onChanged((summary) => store.handleGitChanged(summary))
-    const offSessions = window.proharness.sessions.onEvent((tabId, event) =>
-      useAppStore.getState().handleSessionEvent(tabId, event)
-    )
-    const offPermission = window.proharness.permissions.onRequest((request) =>
-      useAppStore.getState().addPermission(request)
-    )
-    const offResolved = window.proharness.permissions.onResolved((requestId) =>
-      useAppStore.getState().clearPermission(requestId)
-    )
-    const offLoop = window.proharness.loop.onEvent((event) => useAppStore.getState().handleLoopEvent(event))
-    const offDelegate = window.proharness.providers.onEvent((event) =>
-      useAppStore.getState().handleDelegateEvent(event)
-    )
+    const api = window.proharness
+    const store = useAppStore.getState
+    const offs = [
+      api.goals.onChanged((goals) => store().handleGoalsChanged(goals)),
+      api.git.onChanged((summary) => store().handleGitChanged(summary)),
+      api.omp.onChanged((status) => useAppStore.setState({ omp: status })),
+      api.sessions.onEvent((tabId, event) => store().handleSessionEvent(tabId, event)),
+      api.ui.onRequest((request) => store().addRequest(request)),
+      api.ui.onResolved((requestId) => store().clearRequest(requestId)),
+      api.loop.onEvent((event) => store().handleLoopEvent(event)),
+      api.consult.onEvent((event) => store().handleConsultEvent(event))
+    ]
 
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
-      if (target?.closest('.terminal-host')) return
-      const isMac = navigator.platform.toLowerCase().includes('mac')
-      // Linux/Windows use Ctrl+Shift so plain Ctrl shortcuts keep working in text fields.
-      const meta = isMac ? event.metaKey : event.ctrlKey && event.shiftKey
-      if (!meta || event.altKey) return
+      if (target instanceof Element && target.closest('.terminal-host')) return
+      if (!event.metaKey || event.altKey || event.ctrlKey) return
+      const state = store()
       const key = event.key.toLowerCase()
       if (key === 't') {
         event.preventDefault()
-        void useAppStore.getState().createTab({ activate: true })
+        void state.createTab({ activate: true })
       } else if (key === 'w') {
         event.preventDefault()
-        const id = useAppStore.getState().activeTabId
-        if (id) void useAppStore.getState().closeTab(id)
-      } else if (key === ',' || key === '<') {
+        if (state.activeTabId) void state.closeTab(state.activeTabId)
+      } else if (key === ',') {
         event.preventDefault()
-        useAppStore.getState().setSettingsOpen(true)
+        state.setSettingsOpen(true)
+      } else if (key === 'k') {
+        event.preventDefault()
+        state.setPaletteOpen(!state.paletteOpen)
+      } else if (key === '1') {
+        event.preventDefault()
+        state.toggleLeft()
+      } else if (key === '2') {
+        event.preventDefault()
+        state.toggleRight()
       } else if (key === 'j') {
         event.preventDefault()
-        useAppStore.getState().toggleLeft()
-      } else if (key === 'b') {
+        state.setWorkbenchTab('terminal')
+      } else if (/^[3-9]$/.test(key) && !event.shiftKey) {
+        const tab = state.tabs[Number(key) - 3]
+        if (tab) {
+          event.preventDefault()
+          state.setActiveTab(tab.id)
+        }
+      } else if ((key === '[' || key === ']') && event.shiftKey) {
         event.preventDefault()
-        useAppStore.getState().toggleRight()
+        const index = state.tabs.findIndex((tab) => tab.id === state.activeTabId)
+        const next = state.tabs[(index + (key === ']' ? 1 : state.tabs.length - 1)) % Math.max(1, state.tabs.length)]
+        if (next) state.setActiveTab(next.id)
       }
     }
     window.addEventListener('keydown', onKey)
-
     return () => {
-      offGoals()
-      offGit()
-      offSessions()
-      offPermission()
-      offResolved()
-      offLoop()
-      offDelegate()
+      for (const off of offs) off()
       window.removeEventListener('keydown', onKey)
     }
   }, [])
 
   useEffect(() => {
-    if (!settings) return
-    document.documentElement.dataset.reduceMotion = settings.reduceMotion ? 'true' : 'false'
+    if (settings) document.documentElement.dataset.reduceMotion = settings.reduceMotion ? 'true' : 'false'
   }, [settings])
 
   if (loading) {
     return (
       <div className="boot">
-        <div className="boot__mark" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </div>
-        <p className="eyebrow">ProHarness</p>
-        <h1>Warming the desk.</h1>
         <p className="boot__status">
-          <Loader2 size={13} className="spin" /> Reading the workspace and plan
+          <Loader2 size={14} className="spin" /> Opening workspace
         </p>
       </div>
     )
@@ -109,10 +105,9 @@ export default function App(): React.JSX.Element {
   if (bootError) {
     return (
       <div className="boot boot--error">
-        <AlertTriangle size={28} />
-        <p className="eyebrow">Could not open the harness</p>
-        <h1>{bootError}</h1>
-        <p className="boot__status">Check the workspace path and restart the app.</p>
+        <AlertTriangle size={26} />
+        <h1>ProHarness could not start.</h1>
+        <p className="boot__status">{bootError}</p>
         <button type="button" className="btn btn--accent" onClick={() => window.location.reload()}>
           <RefreshCw size={14} /> Retry
         </button>
@@ -129,9 +124,11 @@ export default function App(): React.JSX.Element {
         <Workbench />
       </main>
       <StatusBar />
-      <PermissionDialog />
+      <RequestDialog />
       <GoalDesignDialog />
+      <NewGoalDialog />
       <SettingsDialog />
+      <CommandPalette />
       <Toast />
     </div>
   )

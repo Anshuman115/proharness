@@ -1,116 +1,27 @@
-# ProHarness — Design System
+# ProHarness: design system
 
-**Mode:** Operate. The user completes tasks. Scanability, state clarity, and native expectations
-outrank expression. The brand lives in precise details.
-
-**World:** Warm technical workbench. Charcoal paper, copper action, hairline structure, serif
-display against mono utility. Everything is legible at a glance; nothing looks like a generic
-SaaS dashboard.
+A dense, calm, dark macOS developer tool. Tokens live in `tokens.css`; styles in `src/renderer/src/styles/` (`global.css` primitives, `layout.css` shell, `components.css` surfaces).
 
 ## Tokens
 
-The portable system is in `tokens.css` at the repo root. Components reference named tokens only.
-No raw hex/OKLCH values in component CSS, except the xterm canvas theme which cannot resolve CSS
-custom properties.
-
-### Color roles
-
-| Token | Role |
-| --- | --- |
-| `--color-bg` / `--color-bg-deep` | canvas and recessed canvas |
-| `--color-surface` / `--color-surface-raised` | rail, inspector, dialogs |
-| `--color-line` / `--color-line-strong` | hairlines, separators, edges |
-| `--color-ink` / `--color-ink-soft` / `--color-muted` / `--color-faint` | four-step text hierarchy |
-| `--color-accent` / `--color-accent-soft` | copper action, live state, selected goal |
-| `--color-success` | clean state, completed, approved |
-| `--color-warning` | reviewer rejection, auto-approve warning |
-| `--color-danger` | high risk, destructive action, failed |
-| `--color-info` | links, hunk metadata, user identity |
-| `--color-diff-*` | diff line semantics |
-
-Accent discipline: accent marks the next action and live state. It is not a decorative wash.
-Success and danger are semantic only.
-
-### Type
-
-- Display: Iowan Old Style / Palatino / Georgia. Used for product headings, goal titles, and
-  editorial empty states. Roman only; no italic headings.
-- Body: Avenir Next / Segoe UI Variable / system sans. Used for prose and controls.
-- Mono: SF Mono / JetBrains Mono / Cascadia / Roboto Mono. Used for ids, paths, metadata, labels,
-  terminal, diffs. Mono never exceeds ~0.75rem in dense panels.
-
-Scale: `--text-2xs` through `--text-display`. Body copy is 0.875rem; dense panel metadata is
-0.625–0.75rem. Headings use tight tracking and generous display sizes only in empty states.
-
-### Space & shape
-
-4pt scale (`--space-3xs` 2px through `--space-3xl` 72px). Radii max out at 12px for panels,
-18px reserved. Hairlines are 1px; 2px rules mark emphasis only. No floating cards with 24px
-rounding.
-
-### Motion
-
-- 120ms for hover/press, 180ms for panel reveals, 320ms for rail/workbench width.
-- Only `transform`, `opacity`, and width (layout panels). No bouncing, no parallax, no scroll
-  hijacking.
-- Streaming caret and live dot are the only perpetual animations. `prefers-reduced-motion` and a
-  settings toggle collapse all motion.
+- **Surfaces:** graphite with a slight warm cast (oklch hue 67), darkest to lightest: `bg-deep` 17.5% (app bar, rail, status bar), `bg` 20% (chat), `surface` 23% (cards, inputs), `surface-raised` 25.5% (popovers, dialogs), `hover` 28.5%.
+- **Lines and fills:** translucent ink (5.5%, 8.5% and 14% alpha), so they read the same on every layer.
+- **Text:** ink 93%, muted 70%, faint 62%. Body text clears 4.5:1 on every surface.
+- **Accent:** one amber/copper, `oklch(78% 0.13 70)`, for primary actions, focus, live state and progress. Dark ink sits on accent fills.
+- **Semantic colours:** muted success, warning, danger and info, each with a wash and a line variant.
+- **Provider swatches:** 8px marks so the active model reads at a glance. Anthropic is clay, OpenAI and OpenAI Codex teal, Command Code blue, OpenCode Zen violet, Apple grey; unknown providers get a neutral outline.
+- **Type:** SF Pro Text 13px for the UI, SF Mono 12px for code, ids, paths and costs. Headings stay modest (22/16/14).
+- **Shape:** 6px controls, 10px cards and dialogs, pills for chips. Spacing steps are 2, 4, 6, 8, 12, 16, 20, 24 and 32.
+- **Motion:** 120–180ms ease-out on opacity, transform and colour. The rail and workbench slide by animating grid columns. Both the OS reduce-motion setting and Settings → Reduce motion turn all of this off.
 
 ## Layout
 
-Three-column workbench split:
+Window: `hiddenInset` title bar, with the traffic lights at 16/15 and the app bar padded 78px on the left. Rows are the 40px app bar, the workspace, and a 24px status bar. The workspace has three columns: the plan rail (272px), the chat (fluid, transcript capped at 820px), and the workbench (`clamp(360px, 32vw, 440px)`). ⌘1 and ⌘2 collapse the side columns.
 
-```text
-┌ app bar ────────────────────────────────────────────────┐
-│ plan rail (258) │ transcript (flex) │ workbench (410)   │
-└ status bar ─────────────────────────────────────────────┘
-```
+## Rules
 
-The rail and workbench collapse, with persisted-in-session state. At 1320/1160px the side columns
-narrow before content. No horizontal scroll at the window's 1080px minimum.
-
-The center column is a transcript, not a card. The composer pins to the bottom and carries the
-goal/next-task context above it. The workbench tabs keep one inspector mounted at a time; the
-terminal stays mounted so its buffer survives tab switches.
-
-## Components
-
-- **Buttons** have eight states in CSS: default, hover, focus-visible, active, disabled, loading
-  (spinner inheritance), error/danger variant, success variant. Minimum hit target 28px.
-- **Inputs** use recessed surfaces, mono type, 1px line, focus border accent. Labels are mono,
-  uppercase, 10px.
-- **Permission modal** uses a warning glyph, risk chip, origin, tool name, formatted JSON, and
-  three decisions. High-risk defaults focus Deny. Escape denies.
-- **Diff** uses two line-number columns and a color-coded content column, with hunk/meta styling.
-- **Plan rail** uses goal cards with a 2px progress track, then a phase/task tree; completed tasks
-  are struck through rather than hidden.
-- **Loop** uses a step strip, current task card, independent review card, live agent stream,
-  committed list, and a timestamped log.
-- **Toast** is bottom-right above the status bar; silent success is preferred over confetti.
-
-## Interaction rules
-
-- Never put an approval on a stray keystroke. Modal focus starts on Deny when risk is high or the
-  SDK says `defaultToNo`.
-- Destructive diff restore requires a second click ("Confirm restore").
-- The loop's auto-approve switch is off by default in copy emphasis but defaults on for autonomous
-  operation; its warning is always visible while on.
-- Empty states explain the next concrete action and link to it.
-- The shell is not sandboxed; the composer footer says so.
-
-## Accessibility floor
-
-- Visible `:focus-visible` ring on every interactive element at ≥3:1 against adjacent color.
-- Dialogs use `role="dialog"`, `aria-modal`, labelled headings, and Escape-to-close.
-- Status is never color-only: labels accompany dots and verdict colors.
-- Motion honors `prefers-reduced-motion` and the settings toggle.
-- Tab order follows visual order; the plan rail's task checkbox and body are separate controls.
-
-## Forbidden
-
-- Re-drawn browser/IDE chrome.
-- Purple gradient SaaS styling.
-- Italic display headings.
-- Stat blocks with invented metrics.
-- Fake build windows or terminal screenshots.
-- Decorative animation that does not communicate state.
+- omp is the voice of the transcript. Assistant turns have no bubble and are labelled with the model that produced them; user turns are right-aligned bubbles.
+- Tool calls collapse to one line (status icon, tool name, the agent's stated intent) and expand to show arguments and output.
+- Approval prompts are modal and focus Deny. Return approves only after a short arming delay, so a keystroke meant for the composer cannot approve a command.
+- Costs, context use and model identity are always visible for the active tab. Nothing about autonomous execution is hidden.
+- No gradients, glows, serif display type or decorative illustration.

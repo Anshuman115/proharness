@@ -1,8 +1,8 @@
 import type {
-  AppInfo,
   Bootstrap,
-  DelegateEvent,
-  DelegateRequest,
+  ConsultEvent,
+  ConsultRequest,
+  GitCommitInfo,
   GitFileDiff,
   GitSummary,
   GoalDetail,
@@ -10,37 +10,41 @@ import type {
   LoopConfig,
   LoopEvent,
   LoopState,
-  PermissionDecision,
-  PermissionRequest,
-  ProviderId,
-  ProviderTestOverrides,
-  ProviderTestResult,
+  OmpStatus,
   PublicSettings,
+  RecentSession,
   SessionCreateInput,
   SessionEvent,
-  SessionRuntime,
   SettingsPatch,
   TerminalCreateInput,
   TerminalCreateResult,
   TerminalDataEvent,
-  TerminalExitEvent
+  TerminalExitEvent,
+  ThinkingLevel,
+  UiRequest,
+  UiResponse
 } from './types'
 
 type Unsubscribe = () => void
 
 export interface ProHarnessApi {
   bootstrap(): Promise<Bootstrap>
-  appInfo(): Promise<AppInfo>
 
   settings: {
     update(patch: SettingsPatch): Promise<PublicSettings>
     chooseWorkspace(): Promise<PublicSettings | null>
-    chooseClaudeExecutable(): Promise<string | null>
+    chooseOmp(): Promise<string | null>
+  }
+
+  omp: {
+    refresh(): Promise<OmpStatus>
+    onChanged(listener: (status: OmpStatus) => void): Unsubscribe
   }
 
   goals: {
     list(): Promise<GoalSummary[]>
-    init(): Promise<string>
+    init(): Promise<{ root: string; tracked: boolean }>
+    create(title: string): Promise<GoalSummary>
     read(goalId: string): Promise<GoalDetail>
     toggleTask(goalId: string, taskId: string, checked: boolean): Promise<GoalDetail>
     onChanged(listener: (goals: GoalSummary[]) => void): Unsubscribe
@@ -50,23 +54,30 @@ export interface ProHarnessApi {
     summary(): Promise<GitSummary>
     fileDiff(path: string): Promise<GitFileDiff>
     restore(path: string): Promise<GitSummary>
-    reveal(path: string): Promise<void>
+    commits(): Promise<GitCommitInfo[]>
     onChanged(listener: (summary: GitSummary) => void): Unsubscribe
   }
 
   sessions: {
-    create(input: SessionCreateInput): Promise<SessionRuntime>
-    send(tabId: string, text: string): Promise<void>
+    create(input: SessionCreateInput): Promise<void>
+    send(tabId: string, text: string, behavior?: 'steer' | 'followUp'): Promise<void>
     stop(tabId: string): Promise<void>
     close(tabId: string): Promise<void>
-    setMode(tabId: string, mode: SessionCreateInput['permissionMode']): Promise<void>
+    setModel(tabId: string, model: string): Promise<void>
+    setThinking(tabId: string, level: ThinkingLevel): Promise<void>
+    newConversation(tabId: string): Promise<void>
+    resume(tabId: string, file: string): Promise<void>
+    compact(tabId: string): Promise<void>
+    removeQueued(tabId: string, message: string, queue: 'steering' | 'followUp'): Promise<void>
+    recent(): Promise<RecentSession[]>
+    rename(tabId: string, title: string): Promise<void>
     onEvent(listener: (tabId: string, event: SessionEvent) => void): Unsubscribe
   }
 
-  permissions: {
-    respond(decision: PermissionDecision): Promise<void>
-    onRequest(listener: (request: PermissionRequest) => void): Unsubscribe
-    onResolved(listener: (requestId: string, allow: boolean) => void): Unsubscribe
+  ui: {
+    respond(response: UiResponse): Promise<void>
+    onRequest(listener: (request: UiRequest) => void): Unsubscribe
+    onResolved(listener: (requestId: string) => void): Unsubscribe
   }
 
   terminal: {
@@ -78,11 +89,10 @@ export interface ProHarnessApi {
     onExit(listener: (event: TerminalExitEvent) => void): Unsubscribe
   }
 
-  providers: {
-    delegate(request: DelegateRequest): Promise<{ requestId: string }>
+  consult: {
+    start(request: ConsultRequest): Promise<{ requestId: string }>
     cancel(requestId: string): Promise<void>
-    test(provider: ProviderId, overrides?: ProviderTestOverrides): Promise<ProviderTestResult>
-    onEvent(listener: (event: DelegateEvent) => void): Unsubscribe
+    onEvent(listener: (event: ConsultEvent) => void): Unsubscribe
   }
 
   loop: {

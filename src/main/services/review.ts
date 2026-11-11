@@ -1,11 +1,17 @@
-import type { GoalDetail, TaskRef } from '@shared/types'
+import type { GoalDetail, TaskRef, Verdict } from '@shared/types'
 
 export interface ReviewVerdict {
-  verdict: 'APPROVE' | 'REQUEST_CHANGES'
+  verdict: Verdict
   summary: string
   notes: string
   parseWarning: string | null
 }
+
+export const REVIEWER_SYSTEM = [
+  'You are an independent, skeptical senior code reviewer. You did not write this code.',
+  'You may read files in the repository for context, but never modify anything.',
+  'Always end your answer with the exact VERDICT/SUMMARY/FINDINGS format you are given.'
+].join(' ')
 
 export function buildReviewPrompt(options: {
   goal: Pick<GoalDetail, 'id' | 'title'> | null
@@ -24,13 +30,13 @@ export function buildReviewPrompt(options: {
       ].join('\n')
     : 'No specific task was supplied. Review the entire working-tree change set.'
   return [
-    'You are an independent senior code reviewer. You did not write this code.',
-    'Your job is to decide whether the working-tree diff correctly and safely completes the task, without scope creep or regressions.',
+    'Decide whether the working-tree diff below correctly and safely completes the task, without scope creep or regressions.',
+    'Read surrounding files with your read-only tools when the diff alone is not enough. Do not edit files or run commands that change state.',
     '',
-    `Repository goal: ${options.goal ? `${options.goal.title} (${options.goal.id})` : 'unknown'}`,
+    `Goal: ${options.goal ? `${options.goal.title} (${options.goal.id})` : 'unknown'}`,
     taskBlock,
     '',
-    'Relevant design context (truncated):',
+    'Design context (truncated):',
     '```markdown',
     design || '(no design document)',
     '```',
@@ -44,12 +50,12 @@ export function buildReviewPrompt(options: {
     options.extraInstructions?.trim() || '',
     '',
     'Review rules:',
-    '- APPROVE only when the diff is a plausible, complete implementation of the task and does not contain obvious security, data-loss, or unrelated destructive changes.',
+    '- APPROVE only when the diff is a plausible, complete implementation of the task with no obvious security, data-loss, or unrelated destructive changes.',
     '- REQUEST_CHANGES for missing behavior, broken builds, weak error handling, unsafe shell/file operations, or changes unrelated to the task.',
-    '- Be concrete. Point to files and behaviors. Do not invent issues that are not visible in the diff.',
+    '- Be concrete. Point to files and behaviors. Do not invent issues that are not visible in the code.',
     '- If the diff is empty, return REQUEST_CHANGES.',
     '',
-    'Respond in exactly this format:',
+    'End your answer in exactly this format:',
     'VERDICT: APPROVE',
     'SUMMARY: one or two sentences',
     'FINDINGS:',
@@ -65,9 +71,11 @@ export function buildReviewPrompt(options: {
     .join('\n')
 }
 
+/** Parses the reviewer reply. Anything without a clear verdict fails closed. */
 export function parseReview(text: string): ReviewVerdict {
   const trimmed = text.trim()
-  const verdictMatch = trimmed.match(/VERDICT\s*:\s*(APPROVE|REQUEST[_\s-]*CHANGES)/i)
+  const matches = [...trimmed.matchAll(/VERDICT\s*:\s*\**\s*(APPROVE|REQUEST[_\s-]*CHANGES)/gi)]
+  const verdictMatch = matches[matches.length - 1]
   if (!verdictMatch) {
     return {
       verdict: 'REQUEST_CHANGES',
@@ -76,16 +84,29 @@ export function parseReview(text: string): ReviewVerdict {
       parseWarning: 'Missing VERDICT line; treating the review as changes requested.'
     }
   }
-  const verdict = verdictMatch[1].toUpperCase().startsWith('APPROVE')
-    ? 'APPROVE'
-    : 'REQUEST_CHANGES'
-  const summaryMatch = trimmed.match(/SUMMARY\s*:\s*([\s\S]*?)(?:\n\s*FINDINGS\s*:|$)/i)
-  const findingsIndex = trimmed.search(/\n\s*FINDINGS\s*:/i)
-  const findings = findingsIndex >= 0 ? trimmed.slice(findingsIndex).replace(/^\s*FINDINGS\s*:\s*/i, '') : trimmed
+  const verdict: Verdict = verdictMatch[1].toUpperCase().startsWith('APPROVE') ? 'APPROVE' : 'REQUEST_CHANGES'
+  const tail = trimmed.slice(verdictMatch.index ?? 0)
+  const summaryMatch = tail.match(/SUMMARY\s*:\s*([\s\S]*?)(?:\n\s*FINDINGS\s*:|$)/i)
+  const findingsIndex = tail.search(/\n\s*FINDINGS\s*:/i)
+  const findings = findingsIndex >= 0 ? tail.slice(findingsIndex).replace(/^\s*FINDINGS\s*:\s*/i, '') : tail
   return {
     verdict,
     summary: (summaryMatch?.[1] || '').trim().slice(0, 1_200),
     notes: `VERDICT: ${verdict}\n\n${findings.trim()}`.slice(0, 12_000),
     parseWarning: null
   }
+}
+
+/** True when two `provider/id` model keys refer to the same underlying model family. */
+export function sameModel(a: string, b: string): boolean {
+  const strip = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/:[a-z]+$/, '')
+      .split('/')
+      .slice(1)
+      .join('/')
+      .replace(/^.*\//, '')
+      .replace(/-(fast|ultrafast|\d{8})$/, '')
+  return Boolean(a && b) && strip(a) === strip(b)
 }

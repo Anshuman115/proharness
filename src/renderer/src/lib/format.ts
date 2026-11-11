@@ -40,33 +40,82 @@ export function formatDuration(ms: number): string {
   return `${minutes}m ${seconds}s`
 }
 
-export function permissionModeLabel(mode: string): string {
+export function approvalLabel(mode: string): string {
   switch (mode) {
-    case 'acceptEdits':
-      return 'Accept edits'
-    case 'plan':
-      return 'Plan only'
-    case 'auto':
-      return 'Auto'
-    case 'dontAsk':
-      return 'Don’t ask'
-    case 'bypassPermissions':
-      return 'Bypass'
+    case 'always-ask':
+      return 'Ask every time'
+    case 'always-ask-cached':
+      return 'Ask and remember'
+    case 'write':
+      return 'Ask for commands'
+    case 'yolo':
+      return 'Never ask'
     default:
-      return 'Ask'
+      return mode
   }
+}
+
+export function approvalHint(mode: string): string {
+  switch (mode) {
+    case 'always-ask':
+      return 'Prompts for every edit and command'
+    case 'always-ask-cached':
+      return 'Prompts once per file or folder'
+    case 'write':
+      return 'Edits run freely; shell and subagents ask'
+    case 'yolo':
+      return 'Nothing asks; omp critical-command guards still apply'
+    default:
+      return ''
+  }
+}
+
+/** "anthropic/claude-opus-5-5" -> { provider: "anthropic", id: "claude-opus-5-5" } */
+export function splitModel(key: string | null | undefined): { provider: string; id: string } {
+  if (!key) return { provider: '', id: '' }
+  const index = key.indexOf('/')
+  return index > 0 ? { provider: key.slice(0, index), id: key.slice(index + 1) } : { provider: '', id: key }
+}
+
+export function shortModel(key: string | null | undefined): string {
+  const { id } = splitModel(key)
+  return id.split('/').pop() || id || 'default'
+}
+
+export function providerLabel(provider: string): string {
+  switch (provider) {
+    case 'anthropic':
+      return 'Anthropic'
+    case 'openai-codex':
+      return 'OpenAI Codex'
+    case 'openai':
+      return 'OpenAI'
+    case 'commandcode':
+      return 'Command Code'
+    case 'opencode-zen':
+      return 'OpenCode Zen'
+    case 'apple':
+      return 'Apple'
+    default:
+      return provider
+  }
+}
+
+export function formatTokens(value: number | null | undefined): string {
+  if (!value) return '0'
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`
+  return String(value)
 }
 
 export function statusLabel(status: string): string {
   switch (status) {
     case 'starting':
       return 'Starting'
-    case 'thinking':
-      return 'Thinking'
-    case 'streaming':
-      return 'Streaming'
-    case 'waiting_permission':
-      return 'Waiting'
+    case 'working':
+      return 'Working'
+    case 'closed':
+      return 'Closed'
     case 'stopping':
       return 'Stopping'
     case 'idle':
@@ -104,15 +153,9 @@ export function stepLabel(step: string): string {
 }
 
 export function statusTone(status: string): 'accent' | 'success' | 'danger' | 'muted' {
-  if (['thinking', 'streaming', 'starting', 'stopping', 'waiting_permission'].includes(status)) return 'accent'
+  if (['working', 'starting', 'stopping'].includes(status)) return 'accent'
   if (status === 'idle') return 'success'
   if (status === 'error') return 'danger'
-  return 'muted'
-}
-
-export function riskTone(risk: string): 'danger' | 'warning' | 'muted' {
-  if (risk === 'high') return 'danger'
-  if (risk === 'medium') return 'warning'
   return 'muted'
 }
 

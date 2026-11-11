@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, statSync, watch, type FSWatcher } from 'node:fs'
-import { isAbsolute, resolve, sep } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, type FSWatcher } from 'node:fs'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
-import type { GitChangeStatus, GitFileChange, GitFileDiff, GitSummary } from '@shared/types'
+import type { GitChangeStatus, GitCommitInfo, GitFileChange, GitFileDiff, GitSummary } from '@shared/types'
 
 const execFileAsync = promisify(execFile)
 
@@ -15,6 +15,9 @@ interface GitResult {
 const MAX_DIFF_CHARS = 700_000
 const MAX_DIFF_LINES = 9_000
 const MAX_REVIEW_DIFF_CHARS = 180_000
+/** Local planning state; never shown as a change and never committed. */
+const PLAN_DIR = 'goals'
+const PLAN_EXCLUDE = `:(exclude)${PLAN_DIR}`
 
 function statusFromPorcelain(x: string, y: string): GitChangeStatus {
   if (x === '?' || y === '?') return 'untracked'
@@ -79,7 +82,7 @@ export class GitService {
   async summary(): Promise<GitSummary> {
     const root = await this.root()
     if (!root) {
-      return { isRepo: false, root: null, branch: null, ahead: 0, behind: 0, files: [], clean: true }
+      return { isRepo: false, root: null, branch: null, ahead: 0, behind: 0, files: [], clean: true, head: null }
     }
 
     const branchResult = await this.git(['branch', '--show-current'], [0, 1])
@@ -95,7 +98,7 @@ export class GitService {
       // No upstream configured.
     }
 
-    const statusResult = await this.git(['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+    const statusResult = await this.git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', PLAN_EXCLUDE])
     const records = statusResult.stdout.split('\0')
     const files: GitFileChange[] = []
     for (let i = 0; i < records.length; i += 1) {
@@ -121,7 +124,7 @@ export class GitService {
     }
 
     try {
-      const numstat = await this.git(['diff', 'HEAD', '--numstat'], [0, 128])
+      const numstat = await this.git(['diff', 'HEAD', '--numstat', '--', '.', PLAN_EXCLUDE], [0, 128])
       const byPath = new Map<string, { additions: number; deletions: number }>()
       for (const line of numstat.stdout.split(/\r?\n/)) {
         const parts = line.split('\t')
@@ -164,7 +167,8 @@ export class GitService {
       ahead,
       behind,
       files: files.sort((a, b) => a.path.localeCompare(b.path)),
-      clean: files.length === 0
+      clean: files.length === 0,
+      head: await this.head()
     }
   }
 
@@ -275,13 +279,54 @@ export class GitService {
     if (summary.clean) throw new Error('There are no changes to commit.')
     const trimmed = message.trim()
     if (!trimmed) throw new Error('A commit message is required.')
+    await this.excludeGoals()
     await this.git(['add', '-A'])
+    // goals/ is ignored once excluded; if it was tracked before, keep its edits out anyway.
+    await this.git(['reset', '-q', '--', PLAN_DIR], [0, 1, 128])
     const staged = await this.git(['diff', '--cached', '--name-only'], [0, 1])
     if (!staged.stdout.trim()) throw new Error('Nothing was staged for commit.')
     await this.git(['commit', '-m', trimmed])
     const head = await this.git(['rev-parse', '--short', 'HEAD'])
     this.emitChanged()
     return { hash: head.stdout.trim(), summary: await this.summary() }
+  }
+
+  /**
+   * Keeps goals/ out of git without touching the shared .gitignore: adds it to
+   * .git/info/exclude. Returns true when goals/ was already tracked, which
+   * needs `git rm --cached` by the user.
+   */
+  async excludeGoals(): Promise<{ excluded: boolean; tracked: boolean }> {
+    const root = await this.root()
+    if (!root) return { excluded: false, tracked: false }
+    const rel = relative(realpathSync(root), resolve(realpathSync(this.workspace()), PLAN_DIR)).split(sep).join('/')
+    if (rel.startsWith('..')) return { excluded: false, tracked: false }
+    const pattern = `/${rel}/`
+    const pathResult = await this.git(['rev-parse', '--git-path', 'info/exclude'])
+    const excludeFile = resolve(this.workspace(), pathResult.stdout.trim())
+    const current = existsSync(excludeFile) ? readFileSync(excludeFile, 'utf8') : ''
+    if (!current.split(/\r?\n/).some((line) => line.trim() === pattern)) {
+      mkdirSync(dirname(excludeFile), { recursive: true })
+      const prefix = current && !current.endsWith('\n') ? '\n' : ''
+      appendFileSync(excludeFile, `${prefix}# ProHarness planning state (local only)\n${pattern}\n`, 'utf8')
+    }
+    const tracked = await this.git(['ls-files', '--', PLAN_DIR], [0])
+    return { excluded: true, tracked: Boolean(tracked.stdout.trim()) }
+  }
+
+  async recentCommits(limit = 12): Promise<GitCommitInfo[]> {
+    try {
+      const result = await this.git(['log', `-${limit}`, '--format=%h%x1f%s%x1f%an%x1f%ct'])
+      return result.stdout
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [hash, subject, author, ts] = line.split('\x1f')
+          return { hash, subject, author, ts: Number(ts) * 1000 }
+        })
+    } catch {
+      return []
+    }
   }
 
   async head(): Promise<string | null> {
