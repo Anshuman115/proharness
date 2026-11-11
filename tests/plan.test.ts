@@ -116,3 +116,38 @@ describe('PlanService edge cases', () => {
     rmSync(empty, { recursive: true, force: true })
   })
 })
+
+describe('PlanService goal creation and missing plans', () => {
+  it('scaffolds a slug folder and gives the same title a distinct id', async () => {
+    const first = await service.createGoal('Demo Goal')
+    expect(first.id).toBe('demo-goal')
+    expect(existsSync(join(root, 'goals', first.id, 'DESIGN.md'))).toBe(true)
+    expect(existsSync(join(root, 'goals', first.id, 'PLAN.md'))).toBe(true)
+
+    const second = await service.createGoal('Demo Goal')
+    expect(second.id).not.toBe(first.id)
+    expect(existsSync(join(root, 'goals', second.id, 'DESIGN.md'))).toBe(true)
+    expect(existsSync(join(root, 'goals', second.id, 'PLAN.md'))).toBe(true)
+  })
+
+  it('rejects checking off an unknown task id', async () => {
+    await expect(service.setTaskChecked('demo', '9.9', true)).rejects.toThrow(/not found/)
+    expect(readFileSync(join(root, 'goals', 'demo', 'PLAN.md'), 'utf8')).toBe(plan)
+  })
+
+  it('reads a goal without PLAN.md as an empty plan', async () => {
+    rmSync(join(root, 'goals', 'demo', 'PLAN.md'))
+    const detail = await service.readGoal('demo')
+    expect(detail.plan).toBe('')
+    expect(detail.taskCount).toBe(0)
+    expect(detail.openCount).toBe(0)
+    expect(detail.progress).toBe(0)
+    expect(detail.status).toBe('active')
+    // Current behavior: an empty plan yields the same empty "Tasks" phase twice.
+    expect(detail.phases.map((phase) => [phase.title, phase.tasks.length])).toEqual([
+      ['Tasks', 0],
+      ['Tasks', 0]
+    ])
+    expect(await service.nextTask('demo')).toBeNull()
+  })
+})

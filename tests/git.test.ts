@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -88,6 +88,57 @@ describe('GitService before the first commit', () => {
       expect((await empty.fileDiff('a.txt')).diff).toContain('+two')
     } finally {
       rmSync(fresh, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('GitService.excludeGoals', () => {
+  function excludeLines(): string[] {
+    return readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  }
+
+  it('writes the goals pattern once even when called twice', async () => {
+    expect(await service.excludeGoals()).toEqual({ excluded: true, tracked: false })
+    expect(await service.excludeGoals()).toEqual({ excluded: true, tracked: false })
+    expect(excludeLines().filter((line) => line === '/goals/')).toHaveLength(1)
+  })
+
+  it('scopes the pattern to the workspace when it is a subfolder of the repo', async () => {
+    const app = join(root, 'app')
+    mkdirSync(app, { recursive: true })
+    const nested = new GitService(() => host, () => app)
+    try {
+      expect(await nested.excludeGoals()).toEqual({ excluded: true, tracked: false })
+      expect(excludeLines()).toContain('/app/goals/')
+      expect(excludeLines()).not.toContain('/goals/')
+    } finally {
+      nested.dispose()
+    }
+  })
+
+  it('reports goals/ as untracked when it was never committed', async () => {
+    expect(await service.excludeGoals()).toEqual({ excluded: true, tracked: false })
+  })
+
+  it('reports goals/ as tracked when it was committed before', async () => {
+    mkdirSync(join(root, 'goals', 'demo'), { recursive: true })
+    writeFileSync(join(root, 'goals', 'demo', 'PLAN.md'), '# Plan\n')
+    git('add', '-A')
+    git('commit', '-qm', 'plan')
+    expect(await service.excludeGoals()).toEqual({ excluded: true, tracked: true })
+  })
+
+  it('does nothing outside a git repository', async () => {
+    const plain = mkdtempSync(join(tmpdir(), 'proharness-git-plain-'))
+    const outside = new GitService(() => host, () => plain)
+    try {
+      expect(await outside.excludeGoals()).toEqual({ excluded: false, tracked: false })
+    } finally {
+      outside.dispose()
+      rmSync(plain, { recursive: true, force: true })
     }
   })
 })

@@ -99,7 +99,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-function build(factory: FakeFactory): TaskLoopService {
+function build(factory: LoopAgentFactory): TaskLoopService {
   const host = new LocalHost()
   return new TaskLoopService(new PlanService(() => host, () => root), new GitService(() => host, () => root), factory)
 }
@@ -190,5 +190,149 @@ describe('TaskLoopService', () => {
         reviewerModel: 'commandcode/claude-sonnet-5-5'
       })
     ).rejects.toThrow(/different model/)
+  })
+})
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => undefined
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+type FakeMode = 'ok' | 'wait-for-abort' | 'error'
+
+/** A fake that decides its task from its own turn counter, never from the prompt text. */
+class ControlledFactory implements LoopAgentFactory {
+  turns = 0
+  implementerStarts = 0
+  readonly turnStarted = deferred()
+  readonly releaseFirstTurn = deferred()
+
+  constructor(
+    private readonly mode: FakeMode = 'ok',
+    private readonly gateFirstTurn = false
+  ) {}
+
+  defaultModel(): string | null {
+    return 'anthropic/claude-sonnet-5-5'
+  }
+
+  async implementer(): Promise<LoopAgent> {
+    return {
+      start: async () => {
+        this.implementerStarts += 1
+      },
+      runTurn: async (_text, signal) => {
+        this.turns += 1
+        this.turnStarted.resolve()
+        if (this.mode === 'error') return { status: 'error', error: 'boom', text: '', costUsd: 0 }
+        if (this.mode === 'wait-for-abort') {
+          return new Promise<TurnResult>((resolve) => {
+            const finish = (): void => resolve({ status: 'aborted', error: null, text: '', costUsd: 0 })
+            if (signal.aborted) finish()
+            else signal.addEventListener('abort', finish, { once: true })
+          })
+        }
+        if (this.gateFirstTurn && this.turns === 1) await this.releaseFirstTurn.promise
+        writeFileSync(join(root, `change-${this.turns}.txt`), `${this.turns}\n`)
+        return ok(`turn ${this.turns}`)
+      },
+      close: async () => undefined
+    }
+  }
+
+  async reviewer(): Promise<LoopAgent> {
+    return {
+      start: async () => undefined,
+      runTurn: async () => ok('Looks right.\nVERDICT: APPROVE\nSUMMARY: fine\nFINDINGS:\n- none'),
+      close: async () => undefined
+    }
+  }
+}
+
+function waitForStep(loop: TaskLoopService, step: LoopState['currentStep']): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const started = Date.now()
+    const tick = (): void => {
+      if (loop.getState().currentStep === step) resolve()
+      else if (Date.now() - started > 10_000) reject(new Error(`loop never reached ${step}`))
+      else setTimeout(tick, 10)
+    }
+    tick()
+  })
+}
+
+function planText(): string {
+  return readFileSync(join(root, 'goals', 'demo', 'PLAN.md'), 'utf8')
+}
+
+describe('TaskLoopService stop, pause and failure paths', () => {
+  it('stops during an implementer turn without committing or checking off', async () => {
+    const factory = new ControlledFactory('wait-for-abort')
+    const loop = build(factory)
+    await loop.start({ ...config, maxTasks: 1 })
+    await factory.turnStarted.promise
+    await waitForStep(loop, 'implementing')
+
+    await loop.stop()
+    const state = await waitForEnd(loop)
+
+    expect(state.status).toBe('stopped')
+    expect(git('log', '--format=%s').trim()).toBe('initial')
+    expect(planText()).toContain('- [ ] **1.1** First')
+  })
+
+  it('pauses while implementing and resumes to completion', async () => {
+    const factory = new ControlledFactory('ok', true)
+    const loop = build(factory)
+    await loop.start({ ...config, maxTasks: 2, pauseBetweenMs: 0 })
+    await factory.turnStarted.promise
+    await waitForStep(loop, 'implementing')
+
+    await loop.pause()
+    expect(loop.getState().status).toBe('paused')
+    factory.releaseFirstTurn.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(loop.getState().status).toBe('paused')
+    expect(git('log', '--format=%s').trim()).toBe('initial')
+
+    await loop.resume()
+    const state = await waitForEnd(loop)
+    expect(state.status, state.error ?? undefined).toBe('complete')
+    expect(state.completed.map((record) => record.status)).toEqual(['committed', 'committed'])
+    expect(planText()).toContain('- [x] **1.1** First')
+    expect(planText()).toContain('- [x] **1.2** Second')
+  })
+
+  it('reports an implementer error and commits nothing', async () => {
+    const factory = new ControlledFactory('error')
+    const loop = build(factory)
+    await loop.start({ ...config, maxTasks: 1 })
+    const state = await waitForEnd(loop)
+
+    expect(state.status).toBe('error')
+    expect(state.error).toContain('boom')
+    expect(git('log', '--format=%s').trim()).toBe('initial')
+    expect(planText()).toContain('- [ ] **1.1** First')
+  })
+
+  it('refuses to start while a loop is active', async () => {
+    const factory = new ControlledFactory('ok', true)
+    const loop = build(factory)
+    await loop.start(config)
+    await factory.turnStarted.promise
+
+    await expect(loop.start(config)).rejects.toThrow(/already active/)
+
+    await loop.stop()
+    factory.releaseFirstTurn.resolve()
+    expect((await waitForEnd(loop)).status).toBe('stopped')
+  })
+
+  it('rejects a goal with no open tasks', async () => {
+    writeFileSync(join(root, 'goals', 'demo', 'PLAN.md'), '# Plan\n\n## Phase 1 — One\n\n- [x] **1.1** First\n')
+    await expect(build(new ControlledFactory()).start(config)).rejects.toThrow(/no open tasks/)
   })
 })
