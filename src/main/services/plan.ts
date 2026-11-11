@@ -7,6 +7,7 @@ import type {
   TaskRef
 } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
+import { PollingWatcher } from './polling-watcher'
 
 interface Frontmatter {
   data: Record<string, string>
@@ -205,11 +206,13 @@ function summarizeGoal(
 }
 
 export class PlanService {
-  private poller: NodeJS.Timeout | null = null
-  private polling = false
-  private signature = ''
-  private debounce: NodeJS.Timeout | null = null
-  private listeners = new Set<(goals: GoalSummary[]) => void>()
+  private readonly watcher = new PollingWatcher<GoalSummary[]>({
+    load: () => this.listGoals(),
+    signature: (goals) => JSON.stringify(goals.map((goal) => [goal.id, goal.updatedAt, goal.openCount])),
+    interval: () => this.host().pollMs.plan,
+    debounceMs: 120,
+    forceNotify: true
+  })
 
   constructor(
     private readonly host: () => WorkspaceHost,
@@ -425,78 +428,18 @@ export class PlanService {
   }
 
   onChange(listener: (goals: GoalSummary[]) => void): () => void {
-    this.listeners.add(listener)
-    this.startWatching()
-    return () => this.listeners.delete(listener)
+    return this.watcher.subscribe(listener)
   }
 
   private emitChanged(): void {
-    if (this.debounce) clearTimeout(this.debounce)
-    this.debounce = setTimeout(() => {
-      void (async () => {
-        try {
-          const goals = await this.listGoals()
-          this.signature = this.signatureOf(goals)
-          for (const listener of this.listeners) listener(goals)
-        } catch {
-          // Transient read errors are retried by the poller.
-        }
-      })()
-    }, 120)
-  }
-
-  private signatureOf(goals: GoalSummary[]): string {
-    return JSON.stringify(goals.map((goal) => [goal.id, goal.updatedAt, goal.openCount]))
-  }
-
-  private startWatching(): void {
-    if (this.poller) return
-    void this.seedSignature()
-    const interval = this.host().pollMs.plan
-    this.poller = setInterval(() => void this.poll(), interval)
-    this.poller.unref()
-  }
-
-  private async seedSignature(): Promise<void> {
-    try {
-      this.signature = this.signatureOf(await this.listGoals())
-    } catch {
-      // Keep the previous signature.
-    }
-  }
-
-  private async poll(): Promise<void> {
-    if (this.polling) return
-    this.polling = true
-    try {
-      const goals = await this.listGoals()
-      const signature = this.signatureOf(goals)
-      if (signature === this.signature) return
-      this.signature = signature
-      for (const listener of this.listeners) listener(goals)
-    } catch {
-      // A dropped SSH connection or a half-written goal is retried next tick.
-    } finally {
-      this.polling = false
-    }
-  }
-
-  private stopPolling(): void {
-    clearInterval(this.poller ?? undefined)
-    this.poller = null
+    this.watcher.notify()
   }
 
   resetWatching(): void {
-    this.stopPolling()
-    clearTimeout(this.debounce ?? undefined)
-    this.debounce = null
-    this.signature = ''
-    if (this.listeners.size) this.startWatching()
+    this.watcher.reset()
   }
 
   dispose(): void {
-    this.stopPolling()
-    clearTimeout(this.debounce ?? undefined)
-    this.debounce = null
+    this.watcher.dispose()
   }
 }

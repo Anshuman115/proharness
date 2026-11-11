@@ -1,6 +1,7 @@
 import { PLAN_DIR } from '@shared/defaults'
 import type { GitChangeStatus, GitFileChange, GitFileDiff, GitSummary } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
+import { PollingWatcher } from './polling-watcher'
 
 interface GitResult {
   stdout: string
@@ -36,11 +37,13 @@ function statusFromPorcelain(x: string, y: string): GitChangeStatus {
 }
 
 export class GitService {
-  private debounce: NodeJS.Timeout | null = null
-  private poller: NodeJS.Timeout | null = null
-  private polling = false
-  private lastSignature = ''
-  private listeners = new Set<(summary: GitSummary) => void>()
+  private readonly watcher = new PollingWatcher<GitSummary>({
+    load: () => this.summary(),
+    signature: (summary) => JSON.stringify(summary),
+    interval: () => this.host().pollMs.git,
+    debounceMs: 350,
+    forceNotify: false
+  })
 
   constructor(
     private readonly host: () => WorkspaceHost,
@@ -325,71 +328,18 @@ export class GitService {
   }
 
   onChanged(listener: (summary: GitSummary) => void): () => void {
-    this.listeners.add(listener)
-    this.startWatching()
-    return () => this.listeners.delete(listener)
+    return this.watcher.subscribe(listener)
   }
 
   private emitChanged(): void {
-    if (this.debounce) clearTimeout(this.debounce)
-    this.debounce = setTimeout(() => {
-      void this.summary()
-        .then((summary) => {
-          const signature = JSON.stringify(summary)
-          if (signature === this.lastSignature) return
-          this.lastSignature = signature
-          for (const listener of this.listeners) listener(summary)
-        })
-        .catch(() => undefined)
-    }, 350)
-  }
-
-  private startWatching(): void {
-    if (this.poller) return
-    void this.seedSignature()
-    const interval = this.host().pollMs.git
-    this.poller = setInterval(() => void this.poll(), interval)
-    this.poller.unref()
-  }
-
-  private async seedSignature(): Promise<void> {
-    try {
-      this.lastSignature = JSON.stringify(await this.summary())
-    } catch {
-      // Keep the previous signature.
-    }
-  }
-
-  private async poll(): Promise<void> {
-    if (this.polling) return
-    this.polling = true
-    try {
-      const summary = await this.summary()
-      const signature = JSON.stringify(summary)
-      if (signature === this.lastSignature) return
-      this.lastSignature = signature
-      for (const listener of this.listeners) listener(summary)
-    } catch {
-      // A transient git or filesystem error is retried on the next tick.
-    } finally {
-      this.polling = false
-    }
+    this.watcher.notify()
   }
 
   resetWatching(): void {
-    this.dispose()
-    this.lastSignature = ''
-    if (this.listeners.size) this.startWatching()
+    this.watcher.reset()
   }
 
   dispose(): void {
-    this.stopPolling()
-    clearTimeout(this.debounce ?? undefined)
-    this.debounce = null
-  }
-
-  private stopPolling(): void {
-    clearInterval(this.poller ?? undefined)
-    this.poller = null
+    this.watcher.dispose()
   }
 }
