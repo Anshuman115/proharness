@@ -20,6 +20,7 @@ interface StoredSettings {
   ompPath: string
   /** Model choices per host id. */
   models: Record<string, HostModelPrefs>
+  shareLoginHosts: string[]
   chatApproval: ApprovalMode
   loopApproval: ApprovalMode
   pinnedModels: string[]
@@ -108,6 +109,7 @@ export class SettingsService {
       recentWorkspaces: [],
       ompPath: process.env.PROHARNESS_OMP || '',
       models: { local: { ...emptyPrefs(), reviewerModel: 'anthropic/claude-sonnet-5-5' } },
+      shareLoginHosts: [],
       chatApproval: 'write',
       loopApproval: 'yolo',
       pinnedModels: [...DEFAULT_PINNED],
@@ -140,6 +142,9 @@ export class SettingsService {
         : defaults.recentWorkspaces,
       ompPath: typeof stored.ompPath === 'string' ? stored.ompPath : defaults.ompPath,
       models: this.loadModels(stored, defaults.models),
+      shareLoginHosts: Array.isArray(stored.shareLoginHosts)
+        ? [...new Set((stored.shareLoginHosts as unknown[]).map(cleanModel).filter((host) => host && host !== 'local'))]
+        : [],
       chatApproval: approval(stored.chatApproval, defaults.chatApproval),
       loopApproval: approval(stored.loopApproval, defaults.loopApproval),
       pinnedModels: migratePins(stored.pinnedModels, defaults.pinnedModels),
@@ -250,11 +255,24 @@ export class SettingsService {
       implementerModel: this.effective().implementerModel,
       reviewerModel: this.effective().reviewerModel,
       modelNotes: [...this.effective().notes],
+      shareLoginHosts: [...this.settings.shareLoginHosts],
       loopApproval: this.settings.loopApproval,
       pinnedModels: [...this.settings.pinnedModels],
       terminalShell: this.settings.terminalShell,
       reduceMotion: this.settings.reduceMotion
     }
+  }
+
+  sharesLogins(host: string): boolean {
+    return host !== 'local' && this.settings.shareLoginHosts.includes(host)
+  }
+
+  setShareLogins(host: string, enabled: boolean): PublicSettings {
+    if (host === 'local') throw new Error('This Mac already uses its own logins.')
+    const others = this.settings.shareLoginHosts.filter((item) => item !== host)
+    this.settings.shareLoginHosts = enabled ? [...others, host] : others
+    this.persist()
+    return this.publicSettings()
   }
 
   /** Switches the workspace; remote paths are not checked against the local disk. */

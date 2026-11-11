@@ -9,10 +9,12 @@ import type {
   TerminalCreateInput,
   ThinkingLevel,
   UiResponse,
+  LoginShareStatus,
   WorkspaceListing,
   WorkspaceRef
 } from '@shared/types'
 import type { HostRegistry } from './host/registry'
+import type { LoginShare } from './services/login-share'
 import type { WorkspaceHost } from './host/host'
 import type { SshHost } from './host/ssh'
 import type { ConsultService } from './services/consult'
@@ -30,6 +32,8 @@ export interface IpcDependencies {
   appVersion: string
   settings: SettingsService
   registry: HostRegistry
+  loginShare: LoginShare
+  shareError: () => string | null
   omp: OmpService
   plan: PlanService
   git: GitService
@@ -166,6 +170,35 @@ export function registerIpc(deps: IpcDependencies): void {
   })
 
   ipcMain.handle(CH.ompRefresh, () => omp.refresh())
+
+  const shareStatus = (hostId: string): LoginShareStatus => ({
+    hostId,
+    enabled: settings.sharesLogins(hostId),
+    active: deps.loginShare.isAttached(hostId),
+    error: settings.sharesLogins(hostId) ? deps.shareError() : null
+  })
+
+  ipcMain.handle(CH.loginShareStatus, () => shareStatus(settings.workspaceHost))
+
+  // Toggling restarts the host's omp processes so they pick up the other logins.
+  ipcMain.handle(CH.loginShareSet, async (_event, enabled: boolean) => {
+    const hostId = settings.workspaceHost
+    if (hostId === 'local') throw new Error('Login sharing applies to SSH workspaces.')
+    const host = (await registry.connect(hostId)) as SshHost
+    settings.setShareLogins(hostId, Boolean(enabled))
+    await loop.stop()
+    broker.cancelAll()
+    await sessions.dispose()
+    if (enabled) {
+      await omp.binary(host)
+      if (deps.shareError()) throw new Error(deps.shareError() || 'Login sharing failed.')
+    } else {
+      host.spawnPrefix = ''
+      await deps.loginShare.detach(host)
+    }
+    await omp.refresh()
+    return { settings: settings.publicSettings(), status: shareStatus(hostId) }
+  })
 
   ipcMain.handle(CH.goalsList, () => plan.listGoals())
   ipcMain.handle(CH.goalsInit, async () => {

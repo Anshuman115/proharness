@@ -9,6 +9,7 @@ import type {
   GoalSummary,
   LoopConfig,
   LoopEvent,
+  LoginShareStatus,
   LoopState,
   OmpStatus,
   PublicSettings,
@@ -43,6 +44,11 @@ export interface ProHarnessApi {
     open(ref: WorkspaceRef): Promise<PublicSettings>
     sshHosts(): Promise<string[]>
     listDir(host: string, path: string): Promise<WorkspaceListing>
+  }
+
+  loginShare: {
+    status(): Promise<LoginShareStatus>
+    set(enabled: boolean): Promise<{ settings: PublicSettings; status: LoginShareStatus }>
   }
 
   omp: {

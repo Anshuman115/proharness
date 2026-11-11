@@ -159,13 +159,38 @@ export class SshHost implements WorkspaceHost {
   spawn(spec: SpawnSpec): ChildProcessWithoutNullStreams {
     const line = shellLine(spec.command, spec.args)
     const ttyFlags = spec.tty ? ['-tt'] : ['-T']
+    const command = `${spec.tty ? '' : this.spawnPrefix}${spec.tty ? line : `exec ${line}`}`
     // ssh needs the env synchronously here; fall back to the parent env.
-    return spawnPiped('ssh', [...this.sshArgs(ttyFlags), this.remoteScript(spec.tty ? line : `exec ${line}`, spec.cwd, spec.env)], {
+    return spawnPiped('ssh', [...this.sshArgs(ttyFlags), this.remoteScript(command, spec.cwd, spec.env)], {
       env: sshClientEnv({ ...process.env, ...this.cachedLocal })
     })
   }
 
   private cachedLocal: NodeJS.ProcessEnv = {}
+
+  /**
+   * Shell commands run before every spawned program (omp), e.g. exports that
+   * point it at a tunnelled auth broker. Not applied to exec().
+   */
+  spawnPrefix = ''
+
+  private async control(args: string[]): Promise<void> {
+    const child = spawnPiped('ssh', ['-o', `ControlPath=${this.controlPath}`, ...args, this.id], {
+      env: sshClientEnv(await this.localEnv())
+    })
+    const result = await collect(child, { timeoutMs: 15_000 })
+    if (result.code !== 0) throw new Error(`ssh ${args.join(' ')} failed: ${result.stderr.trim()}`)
+  }
+
+  /** Forwards remotePort on the host to localPort on this Mac over the control connection. */
+  async forwardRemote(remotePort: number, localPort: number): Promise<void> {
+    await this.connect()
+    await this.control(['-O', 'forward', '-R', `127.0.0.1:${remotePort}:127.0.0.1:${localPort}`])
+  }
+
+  async cancelRemote(remotePort: number, localPort: number): Promise<void> {
+    await this.control(['-O', 'cancel', '-R', `127.0.0.1:${remotePort}:127.0.0.1:${localPort}`])
+  }
 
   /** Opens (or reuses) the control connection and caches the local env for spawn(). */
   async connect(): Promise<void> {

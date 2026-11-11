@@ -7,6 +7,8 @@ export const CH = {
   workspaceSshHosts: 'workspace:ssh-hosts',
   workspaceListDir: 'workspace:list-dir',
   ompRefresh: 'omp:refresh',
+  loginShareStatus: 'login-share:status',
+  loginShareSet: 'login-share:set',
   ompChanged: 'omp:changed',
   settingsChanged: 'settings:changed',
   goalsList: 'goals:list',

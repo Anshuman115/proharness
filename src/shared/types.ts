@@ -65,6 +65,14 @@ export interface HostModelPrefs {
   reviewerModel: string
 }
 
+export interface LoginShareStatus {
+  hostId: string
+  enabled: boolean
+  /** Broker running and tunnel up for this host. */
+  active: boolean
+  error: string | null
+}
+
 export interface PublicSettings {
   workspacePath: string
   workspaceHost: string
@@ -79,6 +87,8 @@ export interface PublicSettings {
   reviewerModel: string
   /** Why a saved model was replaced on this host, if it was. */
   modelNotes: string[]
+  /** SSH hosts that use this Mac's omp logins through a tunnelled auth broker. */
+  shareLoginHosts: string[]
   loopApproval: ApprovalMode
   pinnedModels: string[]
   terminalShell: string
@@ -86,7 +96,7 @@ export interface PublicSettings {
 }
 
 export type SettingsPatch = Partial<
-  Omit<PublicSettings, 'workspaceName' | 'goalsPath' | 'recentWorkspaces' | 'modelNotes'>
+  Omit<PublicSettings, 'workspaceName' | 'goalsPath' | 'recentWorkspaces' | 'modelNotes' | 'shareLoginHosts'>
 >
 
 export interface Bootstrap {

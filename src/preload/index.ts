@@ -39,6 +39,11 @@ const api: ProHarnessApi = {
     listDir: (host, path) => ipcRenderer.invoke(CH.workspaceListDir, host, path)
   },
 
+  loginShare: {
+    status: () => ipcRenderer.invoke(CH.loginShareStatus),
+    set: (enabled) => ipcRenderer.invoke(CH.loginShareSet, enabled)
+  },
+
   omp: {
     refresh: () => ipcRenderer.invoke(CH.ompRefresh),
     onChanged: (listener) => subscribe<[OmpStatus]>(CH.ompChanged, listener)

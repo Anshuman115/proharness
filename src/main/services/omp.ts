@@ -42,6 +42,8 @@ export class OmpService {
   private refreshingHost: string | null = null
   private readonly binaries = new Map<string, string>()
   private listeners = new Set<(status: OmpStatus) => void>()
+  /** Runs before any omp process is spawned on a host (e.g. attach login sharing). */
+  prepareHost: (host: WorkspaceHost) => Promise<void> = async () => undefined
 
   constructor(
     private readonly explicitPath: () => string,
@@ -94,6 +96,7 @@ export class OmpService {
 
   /** Resolves the omp binary on `host` or throws an actionable error. */
   async binary(host: WorkspaceHost = this.activeHost()): Promise<string> {
+    if (host.kind !== 'local') await this.prepareHost(host)
     if (host.kind === 'local') {
       const env = await shellEnv()
       const path = findOmp(this.explicitPath(), env)

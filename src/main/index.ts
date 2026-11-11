@@ -15,6 +15,8 @@ import { SettingsService } from './services/settings'
 import { TaskLoopService } from './services/task-loop'
 import { TerminalService } from './services/terminal'
 import { UiBroker } from './services/ui-broker'
+import { brokerEnvScript, LoginShare } from './services/login-share'
+import type { SshHost } from './host/ssh'
 
 let mainWindow: BrowserWindow | null = null
 let cleanup: (() => Promise<void>) | null = null
@@ -51,6 +53,25 @@ if (!gotLock) {
       join(dataDir, 'omp-status.json'),
       activeHost
     )
+    // Shares this Mac's omp logins with SSH hosts that opt in.
+    const loginShare = new LoginShare(() => omp.binary(registry.local), () => omp.env())
+    let shareError: string | null = null
+    omp.prepareHost = async (host) => {
+      const ssh = host as SshHost
+      if (!settings.sharesLogins(host.id)) {
+        ssh.spawnPrefix = ''
+        return
+      }
+      try {
+        const port = await loginShare.attach(ssh)
+        ssh.spawnPrefix = brokerEnvScript(port)
+        shareError = null
+      } catch (error) {
+        // Fall back to the host's own logins rather than failing the spawn.
+        ssh.spawnPrefix = ''
+        shareError = (error as Error).message
+      }
+    }
     const plan = new PlanService(activeHost, () => settings.workspacePath)
     const git = new GitService(activeHost, () => settings.workspacePath)
     const broker = new UiBroker()
@@ -108,6 +129,8 @@ if (!gotLock) {
       appVersion: app.getVersion(),
       settings,
       registry,
+      loginShare,
+      shareError: () => shareError,
       omp,
       plan,
       git,
@@ -141,6 +164,7 @@ if (!gotLock) {
       terminal.dispose()
       plan.dispose()
       git.dispose()
+      loginShare.dispose()
       registry.dispose()
       await sessions.dispose()
     }

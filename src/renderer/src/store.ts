@@ -224,6 +224,8 @@ export interface AppStore {
   chooseWorkspace: () => Promise<void>
   setWorkspaceOpen: (open: boolean) => void
   openWorkspace: (ref: WorkspaceRef) => Promise<void>
+  /** Clears tabs and reloads after the host's omp processes were restarted. */
+  resetAfterHostChange: () => Promise<void>
   setSettingsOpen: (open: boolean) => void
   pushToast: (kind: Toast['kind'], message: string) => void
   clearToast: () => void
@@ -669,6 +671,10 @@ export const useAppStore = create<AppStore>((set, get) => {
         get().pushToast('error', (error as Error).message)
         throw error
       }
+    },
+
+    resetAfterHostChange: async () => {
+      await resetWorkspaceState()
     },
 
     setSettingsOpen: (open) => set({ settingsOpen: open }),

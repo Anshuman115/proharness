@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check, CheckCircle2, FolderOpen, Loader2, Pin, RefreshCw, X, XCircle } from 'lucide-react'
-import { APPROVAL_MODES, type ApprovalMode, type SettingsPatch } from '@shared/types'
+import { APPROVAL_MODES, type ApprovalMode, type LoginShareStatus, type SettingsPatch } from '@shared/types'
 import { useAppStore } from '../store'
 import { approvalHint, approvalLabel, formatRelative, shortModel } from '../lib/format'
 import { ModelNotes, ModelPicker } from './ModelPicker'
@@ -230,6 +230,7 @@ export function SettingsDialog(): React.JSX.Element | null {
                 </div>
                 <p className="field-hint">Changing it closes open tabs and stops the loop.</p>
               </div>
+              {settings.workspaceHost !== 'local' ? <LoginShareField host={settings.workspaceHost} /> : null}
               <div className="field-row">
                 <div className="field field--grow">
                   <label htmlFor="settings-shell">Terminal shell</label>
@@ -266,6 +267,61 @@ export function SettingsDialog(): React.JSX.Element | null {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Lets an SSH host use this Mac's omp logins through a tunnelled auth broker. */
+function LoginShareField({ host }: { host: string }): React.JSX.Element {
+  const pushToast = useAppStore((state) => state.pushToast)
+  const [status, setStatus] = useState<LoginShareStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void window.proharness.loginShare.status().then(setStatus).catch(() => setStatus(null))
+  }, [host])
+
+  const toggle = async (): Promise<void> => {
+    const next = !status?.enabled
+    setBusy(true)
+    try {
+      const result = await window.proharness.loginShare.set(next)
+      setStatus(result.status)
+      useAppStore.setState({ settings: result.settings })
+      await useAppStore.getState().resetAfterHostChange()
+      pushToast('success', next ? `${host} now uses this Mac's logins.` : `${host} uses its own logins again.`)
+    } catch (error) {
+      pushToast('error', (error as Error).message)
+      void window.proharness.loginShare.status().then(setStatus).catch(() => undefined)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="field">
+      <label>Logins on {host}</label>
+      <div className="input-with-action">
+        <button
+          type="button"
+          className={`switch ${status?.enabled ? 'is-on' : ''}`}
+          role="switch"
+          aria-checked={Boolean(status?.enabled)}
+          onClick={() => void toggle()}
+          disabled={busy}
+        >
+          <span />
+          {busy ? <Loader2 size={12} className="spin" /> : null}
+          {status?.enabled ? "Use this Mac's logins" : `Use ${host}'s own logins`}
+        </button>
+      </div>
+      <p className="field-hint">
+        {status?.enabled
+          ? status.error
+            ? `Not connected: ${status.error}`
+            : `${host} gets short-lived tokens from this Mac over SSH; requests go straight to the provider. This Mac must be on for new sessions and hourly token renewals.`
+          : `${host} uses the providers logged in on it. Turn on to use this Mac's Claude, Codex and other logins without storing them there.`}
+      </p>
     </div>
   )
 }

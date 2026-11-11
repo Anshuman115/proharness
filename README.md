@@ -27,7 +27,9 @@ providers:
     apiKey: "!cat /home/ubuntu/.omp/agent/secrets/commandcode.key"
 ```
 
-Model choices must exist on the remote omp. On a host with only Command Code, review with `commandcode/claude-sonnet-5-5`. Key or agent authentication is required; ProHarness never prompts for SSH passwords.
+**Use this Mac's logins** (Settings → Workspace, per SSH host) shares your Mac's omp accounts with the host without copying keys there. ProHarness runs `omp auth-broker` on loopback and forwards it into the host over the existing SSH connection. The host's omp fetches short-lived access tokens from it when it starts and roughly hourly to renew; model requests go straight from the host to the provider, so streaming speed is unchanged (measured on devbox: about 3.0 s per one-line prompt either way). Long-lived refresh tokens stay on the Mac. Turning it off removes the token from the host. Since the Mac hands out the tokens, it has to be awake when a session starts and at each renewal.
+
+Model choices are saved per host and checked against that host's catalog; a missing model falls back to the same model through another provider, with a note. Key or agent authentication is required; ProHarness never prompts for SSH passwords.
 
 ### goals/ never reaches git
 

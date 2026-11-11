@@ -46,3 +46,13 @@ describe('parseSshConfigHosts', () => {
     expect(parseSshConfigHosts(config)).toEqual([])
   })
 })
+
+describe('login sharing env', () => {
+  it('reads the token from a file on the host instead of inlining it', async () => {
+    const { brokerEnvScript, REMOTE_TOKEN_PATH } = await import('../src/main/services/login-share')
+    const script = brokerEnvScript(51234)
+    expect(script).toContain('OMP_AUTH_BROKER_URL=http://127.0.0.1:51234')
+    expect(script).toContain(`$(cat "$HOME/${REMOTE_TOKEN_PATH}")`)
+    expect(script.trim().endsWith(';')).toBe(true)
+  })
+})
