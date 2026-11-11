@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, statSync, watch, type FSWatcher } from 'node:fs'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { isAbsolute, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { GitChangeStatus, GitFileChange, GitFileDiff, GitSummary } from '@shared/types'
 
@@ -15,10 +15,6 @@ interface GitResult {
 const MAX_DIFF_CHARS = 700_000
 const MAX_DIFF_LINES = 9_000
 const MAX_REVIEW_DIFF_CHARS = 180_000
-
-function trimOutput(value: string): string {
-  return value.replace(/\s+$/, '')
-}
 
 function statusFromPorcelain(x: string, y: string): GitChangeStatus {
   if (x === '?' || y === '?') return 'untracked'
@@ -43,6 +39,8 @@ function statusFromPorcelain(x: string, y: string): GitChangeStatus {
 export class GitService {
   private watcher: FSWatcher | null = null
   private debounce: NodeJS.Timeout | null = null
+  private poller: NodeJS.Timeout | null = null
+  private lastSignature = ''
   private listeners = new Set<(summary: GitSummary) => void>()
 
   constructor(
@@ -140,17 +138,23 @@ export class GitService {
         if (stats) {
           file.additions = stats.additions
           file.deletions = stats.deletions
-        } else if (file.status === 'untracked') {
-          try {
-            const content = readFileSync(resolve(root, file.path), 'utf8')
-            file.additions = content.split(/\r?\n/).length
-          } catch {
-            // Binary or inaccessible file.
-          }
         }
       }
     } catch {
       // `git diff HEAD` fails before the first commit; status is still useful.
+    }
+    for (const file of files) {
+      if (file.status !== 'untracked') continue
+      try {
+        const absolute = resolve(root, file.path)
+        if (statSync(absolute).size > 3 * 1024 * 1024) continue
+        const content = readFileSync(absolute)
+        if (content.subarray(0, 8_000).includes(0)) continue
+        const textContent = content.toString('utf8')
+        file.additions = textContent ? textContent.replace(/\r?\n$/, '').split(/\r?\n/).length : 0
+      } catch {
+        // Inaccessible file.
+      }
     }
 
     return {
@@ -177,7 +181,7 @@ export class GitService {
     const root = await this.root()
     if (!root) throw new Error('The workspace is not a git repository.')
     const absolute = this.safePath(path, root)
-    const status = await this.git(['status', '--porcelain=v1', '--', path])
+    const status = await this.git(['status', '--porcelain=v1', '--untracked-files=all', '--', path])
     const untracked = status.stdout.startsWith('??')
     let diff = ''
     if (!untracked) {
@@ -204,7 +208,7 @@ export class GitService {
       if (probe.includes(0)) {
         return { path, diff: `Binary file: ${path}`, binary: true, untracked: true, truncated: false }
       }
-      const lines = buffer.toString('utf8').split(/\r?\n/)
+      const lines = buffer.toString('utf8').replace(/\r?\n$/, '').split(/\r?\n/)
       const capped = lines.slice(0, MAX_DIFF_LINES)
       diff = [
         `diff --git a/${path} b/${path}`,
@@ -231,10 +235,13 @@ export class GitService {
     const summary = await this.summary()
     if (!summary.isRepo) throw new Error('The workspace is not a git repository.')
     const sections: string[] = []
+    let size = 0
     for (const file of summary.files) {
       const detail = await this.fileDiff(file.path)
-      sections.push(detail.diff)
-      if (sections.join('\n').length > maxChars) break
+      const section = detail.diff || `--- ${file.status}: ${file.path}`
+      sections.push(section)
+      size += section.length + 2
+      if (size > maxChars) break
     }
     const full = sections.join('\n\n')
     const truncated = full.length > maxChars
@@ -286,10 +293,6 @@ export class GitService {
     }
   }
 
-  relativeToRoot(path: string, root: string): string {
-    return relative(root, path)
-  }
-
   onChanged(listener: (summary: GitSummary) => void): () => void {
     this.listeners.add(listener)
     this.startWatching()
@@ -301,6 +304,9 @@ export class GitService {
     this.debounce = setTimeout(() => {
       void this.summary()
         .then((summary) => {
+          const signature = JSON.stringify(summary)
+          if (signature === this.lastSignature) return
+          this.lastSignature = signature
           for (const listener of this.listeners) listener(summary)
         })
         .catch(() => undefined)
@@ -312,7 +318,11 @@ export class GitService {
     try {
       this.watcher = watch(this.workspace(), { recursive: true }, (_event, filename) => {
         if (!filename) return
-        const value = String(filename)
+        const value = String(filename).replace(/\\/g, '/')
+        if (value === '.git/index' || value === '.git/HEAD') {
+          this.emitChanged()
+          return
+        }
         if (
           value.startsWith('.git') ||
           value.includes('node_modules') ||
@@ -326,21 +336,26 @@ export class GitService {
         this.emitChanged()
       })
     } catch {
+      // Recursive watching is unavailable on some Linux filesystems/Node builds.
       this.watcher = null
+    }
+    if (!this.watcher && !this.poller) {
+      this.poller = setInterval(() => this.emitChanged(), 4_000)
+      this.poller.unref()
     }
   }
 
   resetWatching(): void {
-    this.watcher?.close()
-    this.watcher = null
-    if (this.debounce) clearTimeout(this.debounce)
-    this.debounce = null
+    this.dispose()
+    this.lastSignature = ''
     if (this.listeners.size) this.startWatching()
   }
 
   dispose(): void {
     this.watcher?.close()
     this.watcher = null
+    if (this.poller) clearInterval(this.poller)
+    this.poller = null
     if (this.debounce) clearTimeout(this.debounce)
     this.debounce = null
   }

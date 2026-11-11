@@ -5,6 +5,7 @@ export const CH = {
   settingsChooseWorkspace: 'settings:choose-workspace',
   settingsChooseExecutable: 'settings:choose-executable',
   goalsList: 'goals:list',
+  goalsInit: 'goals:init',
   goalsRead: 'goals:read',
   goalsToggleTask: 'goals:toggle-task',
   goalsChanged: 'goals:changed',

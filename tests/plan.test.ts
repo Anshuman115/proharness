@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -91,5 +91,26 @@ describe('PlanService', () => {
   it('rejects unknown goals and path traversal', () => {
     expect(() => service.readGoal('../etc')).toThrow(/Invalid goal id/)
     expect(() => service.readGoal('missing')).toThrow(/not found/)
+  })
+})
+
+describe('PlanService edge cases', () => {
+  it('ignores checklist examples inside code fences and keeps CRLF line endings', () => {
+    const crlf = ['## Phase 1 — Docs', '- [ ] **1.1** Real task', '```md', '- [ ] **9.9** Example only', '```', ''].join('\r\n')
+    writeFileSync(join(root, 'goals', 'demo', 'PLAN.md'), crlf)
+    const detail = service.readGoal('demo')
+    expect(detail.taskCount).toBe(1)
+    service.setTaskChecked('demo', '1.1', true)
+    const raw = readFileSync(join(root, 'goals', 'demo', 'PLAN.md'), 'utf8')
+    expect(raw).toContain('- [x] **1.1** Real task\r\n')
+    expect(raw).toContain('- [ ] **9.9** Example only')
+  })
+
+  it('does not create goals/ just by listing', () => {
+    const empty = mkdtempSync(join(tmpdir(), 'proharness-empty-'))
+    const other = new PlanService(() => empty)
+    expect(other.listGoals()).toEqual([])
+    expect(existsSync(join(empty, 'goals'))).toBe(false)
+    rmSync(empty, { recursive: true, force: true })
   })
 })

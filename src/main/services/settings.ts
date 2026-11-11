@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -98,7 +99,13 @@ export class SettingsService {
         // Keep looking.
       }
     }
-    return join(app.getPath('documents'), 'ProHarness')
+    const fallback = join(app.getPath('documents'), 'ProHarness')
+    try {
+      mkdirSync(fallback, { recursive: true })
+    } catch {
+      // Settings will report the folder as missing; the user can pick another.
+    }
+    return fallback
   }
 
   private defaults(): StoredSettings {
@@ -312,7 +319,7 @@ export class SettingsService {
   update(patch: SettingsPatch): PublicSettings {
     if (patch.workspacePath !== undefined) {
       const next = patch.workspacePath.trim()
-      if (!next || !existsSync(next)) {
+      if (!next || !existsSync(next) || !statSync(next).isDirectory()) {
         throw new Error('Workspace folder does not exist.')
       }
       this.settings.workspacePath = next

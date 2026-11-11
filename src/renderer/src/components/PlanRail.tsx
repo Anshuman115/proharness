@@ -12,10 +12,11 @@ import {
 import { useAppStore } from '../store'
 import { stepLabel } from '../lib/format'
 
+const shortcutModifier = navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+Shift'
+
 export function PlanRail(): React.JSX.Element {
   const leftOpen = useAppStore((state) => state.leftOpen)
   const goals = useAppStore((state) => state.goals)
-  const settings = useAppStore((state) => state.settings)
   const activeGoalId = useAppStore((state) => state.activeGoalId)
   const detail = useAppStore((state) => state.goalDetail)
   const goalLoading = useAppStore((state) => state.goalLoading)
@@ -61,10 +62,13 @@ export function PlanRail(): React.JSX.Element {
               type="button"
               className="btn btn--quiet btn--sm"
               onClick={() => {
-                if (settings) void window.proharness.shell.openPath(settings.goalsPath)
+                void window.proharness.goals
+                  .init()
+                  .then((path) => window.proharness.shell.openPath(path))
+                  .catch(() => undefined)
               }}
             >
-              <FolderOpen size={13} /> Open goals folder
+              <FolderOpen size={13} /> Create goals folder
             </button>
           </div>
         ) : (
@@ -211,8 +215,8 @@ export function PlanRail(): React.JSX.Element {
           </button>
         ) : (
           <p className="rail__hint">
-            <span className="kbd">⌘</span>
-            <span className="kbd">↵</span> send · <span className="kbd">esc</span> close dialogs
+            <span className="kbd">↵</span> send · <span className="kbd">{shortcutModifier}</span>
+            <span className="kbd">T</span> new tab · <span className="kbd">esc</span> close dialogs
           </p>
         )}
       </div>

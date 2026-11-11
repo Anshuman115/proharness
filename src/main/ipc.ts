@@ -50,9 +50,9 @@ export function registerIpc(deps: IpcDependencies): void {
   const refreshAfterWorkspaceChange = async (previous: string): Promise<void> => {
     if (previous === settings.workspacePath) return
     await loop.stop()
+    permissions.denyAll('The workspace changed.')
     sessions.dispose()
     terminal.dispose()
-    plan.ensureRoot()
     plan.resetWatching()
     git.resetWatching()
     send(CH.goalsChanged, plan.listGoals())
@@ -60,7 +60,6 @@ export function registerIpc(deps: IpcDependencies): void {
   }
 
   ipcMain.handle(CH.bootstrap, async () => {
-    plan.ensureRoot()
     return {
       settings: settings.publicSettings(),
       goals: plan.listGoals(),
@@ -118,6 +117,13 @@ export function registerIpc(deps: IpcDependencies): void {
   })
 
   ipcMain.handle(CH.goalsList, () => plan.listGoals())
+  ipcMain.handle(CH.goalsInit, () => {
+    plan.ensureRoot()
+    plan.resetWatching()
+    const goals = plan.listGoals()
+    send(CH.goalsChanged, goals)
+    return plan.goalsRoot
+  })
   ipcMain.handle(CH.goalsRead, (_event, goalId: string) => plan.readGoal(goalId))
   ipcMain.handle(CH.goalsToggleTask, (_event, goalId: string, taskId: string, checked: boolean) => {
     const detail = plan.setTaskChecked(goalId, taskId, checked)
@@ -139,15 +145,7 @@ export function registerIpc(deps: IpcDependencies): void {
   })
 
   ipcMain.handle(CH.sessionCreate, (_event, input) => sessions.create(input))
-  ipcMain.handle(CH.sessionSend, (_event, tabId: string, text: string) => {
-    void sessions.send(tabId, text).catch((error: Error) => {
-      send(CH.sessionEvent, tabId, {
-        type: 'error',
-        message: error.message || 'Could not send message.'
-      })
-      send(CH.sessionEvent, tabId, { type: 'status', status: 'idle' })
-    })
-  })
+  ipcMain.handle(CH.sessionSend, (_event, tabId: string, text: string) => sessions.start(tabId, text))
   ipcMain.handle(CH.sessionStop, (_event, tabId: string) => sessions.stop(tabId))
   ipcMain.handle(CH.sessionClose, (_event, tabId: string) => sessions.close(tabId))
   ipcMain.handle(CH.sessionSetMode, (_event, tabId: string, mode) => sessions.setMode(tabId, mode))
@@ -165,7 +163,7 @@ export function registerIpc(deps: IpcDependencies): void {
 
   ipcMain.handle(CH.providerDelegateStart, (_event, request: DelegateRequest) => providers.start(request))
   ipcMain.handle(CH.providerDelegateCancel, (_event, requestId: string) => providers.cancel(requestId))
-  ipcMain.handle(CH.providerTest, (_event, provider, model?: string) => providers.test(provider, model))
+  ipcMain.handle(CH.providerTest, (_event, provider, overrides) => providers.test(provider, overrides))
 
   ipcMain.handle(CH.loopStart, (_event, config: LoopConfig) => loop.start(config))
   ipcMain.handle(CH.loopPause, () => loop.pause())

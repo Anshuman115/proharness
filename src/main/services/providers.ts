@@ -5,6 +5,7 @@ import {
   type DelegateRequest,
   type DelegateUsage,
   type ProviderId,
+  type ProviderTestOverrides,
   type ProviderTestResult
 } from '@shared/types'
 import type { SettingsService } from './settings'
@@ -66,12 +67,17 @@ export class ProviderService {
     return this.settings.providerIsConfigured(provider)
   }
 
-  private async *streamCompletion(request: DelegateRequest, signal?: AbortSignal): AsyncGenerator<StreamChunk> {
-    const apiKey = this.settings.getProviderApiKey(request.provider)
+  private async *streamCompletion(
+    request: DelegateRequest,
+    signal?: AbortSignal,
+    overrides: ProviderTestOverrides = {}
+  ): AsyncGenerator<StreamChunk> {
+    const apiKey = overrides.apiKey?.trim() || this.settings.getProviderApiKey(request.provider)
     if (!apiKey) {
       throw new Error(`${providerName(request.provider)} is not configured. Add an API key in Settings.`)
     }
-    const baseUrl = this.settings.getProviderBaseUrl(request.provider).replace(/\/+$/, '')
+    const baseUrl = (overrides.baseUrl?.trim() || this.settings.getProviderBaseUrl(request.provider)).replace(/\/+$/, '')
+    if (!/^https?:\/\//i.test(baseUrl)) throw new Error('The provider base URL must start with http:// or https://.')
     const model = request.model?.trim() || this.settings.getProviderModel(request.provider)
     const endpoint = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`
     const messages: Array<{ role: string; content: string }> = []
@@ -124,8 +130,8 @@ export class ProviderService {
     try {
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
+        if (done && !buffer) break
+        buffer += done ? `${decoder.decode()}\n` : decoder.decode(value, { stream: true })
         let boundary = buffer.indexOf('\n')
         while (boundary !== -1) {
           const rawLine = buffer.slice(0, boundary).trim()
@@ -150,19 +156,25 @@ export class ProviderService {
           if (text || reasoning) yield { text, reasoning }
           if (usage) yield { usage }
         }
+        if (done) break
       }
       if (!sawEvent) {
         throw new Error(`${providerName(request.provider)} did not return a streaming response.`)
       }
     } finally {
-      reader.releaseLock()
+      // Closes the connection when the caller stops early or sees [DONE].
+      await reader.cancel().catch(() => undefined)
     }
   }
 
-  async complete(request: DelegateRequest, signal?: AbortSignal): Promise<{ text: string; usage: DelegateUsage | null }> {
+  async complete(
+    request: DelegateRequest,
+    signal?: AbortSignal,
+    overrides?: ProviderTestOverrides
+  ): Promise<{ text: string; usage: DelegateUsage | null }> {
     let text = ''
     let usage: DelegateUsage | null = null
-    for await (const chunk of this.streamCompletion(request, signal)) {
+    for await (const chunk of this.streamCompletion(request, signal, overrides)) {
       if (chunk.text) text += chunk.text
       if (chunk.usage) usage = chunk.usage
     }
@@ -198,7 +210,7 @@ export class ProviderService {
       this.emit({
         type: 'error',
         requestId,
-        message: (error as Error).message || 'Delegation failed.'
+        message: controller.signal.aborted ? 'Cancelled.' : (error as Error).message || 'Delegation failed.'
       })
     } finally {
       this.active.delete(requestId)
@@ -209,19 +221,23 @@ export class ProviderService {
     const active = this.active.get(requestId)
     if (!active) return
     active.controller.abort()
-    this.active.delete(requestId)
   }
 
-  async test(provider: ProviderId, model?: string): Promise<ProviderTestResult> {
+  async test(provider: ProviderId, overrides: ProviderTestOverrides = {}): Promise<ProviderTestResult> {
     const started = Date.now()
+    const model = overrides.model?.trim() || undefined
     try {
-      const result = await this.complete({
-        provider,
-        model,
-        system: 'You are a connectivity check. Answer with exactly OK.',
-        prompt: 'Reply with exactly OK.',
-        maxTokens: 8
-      })
+      const result = await this.complete(
+        {
+          provider,
+          model,
+          system: 'You are a connectivity check. Answer with exactly OK.',
+          prompt: 'Reply with exactly OK.',
+          maxTokens: 256
+        },
+        AbortSignal.timeout(45_000),
+        overrides
+      )
       return {
         ok: Boolean(result.text.trim()),
         message: result.text.trim().slice(0, 80) || 'Connected, but the model returned no text.',

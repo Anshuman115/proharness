@@ -37,6 +37,7 @@ export function SettingsDialog(): React.JSX.Element | null {
   const chooseWorkspace = useAppStore((state) => state.chooseWorkspace)
   const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
   const pushToast = useAppStore((state) => state.pushToast)
+  const appVersion = useAppStore((state) => state.appVersion)
 
   const [workspace, setWorkspace] = useState('')
   const [model, setModel] = useState('')
@@ -51,6 +52,7 @@ export function SettingsDialog(): React.JSX.Element | null {
     kimi: { baseUrl: '', model: '', apiKey: '', clear: false }
   })
   const [terminalShell, setTerminalShell] = useState('')
+  const [reduceMotion, setReduceMotion] = useState(false)
   const [defaultReviewer, setDefaultReviewer] = useState<ProviderId>('deepseek')
   const [defaultReviewerModel, setDefaultReviewerModel] = useState('')
   const [testing, setTesting] = useState<ProviderId | null>(null)
@@ -78,6 +80,7 @@ export function SettingsDialog(): React.JSX.Element | null {
     }
     setProviders(next)
     setTerminalShell(settings.terminalShell)
+    setReduceMotion(settings.reduceMotion)
     setDefaultReviewer(settings.defaultReviewer)
     setDefaultReviewerModel(settings.defaultReviewerModel)
     setError(null)
@@ -102,7 +105,12 @@ export function SettingsDialog(): React.JSX.Element | null {
   const testProvider = async (id: ProviderId): Promise<void> => {
     setTesting(id)
     try {
-      const result = await window.proharness.providers.test(id, providers[id].model)
+      const draft = providers[id]
+      const result = await window.proharness.providers.test(id, {
+        baseUrl: draft.baseUrl,
+        model: draft.model,
+        apiKey: draft.clear ? undefined : draft.apiKey
+      })
       setTestResults((current) => ({ ...current, [id]: result }))
     } catch (err) {
       pushToast('error', (err as Error).message)
@@ -135,7 +143,8 @@ export function SettingsDialog(): React.JSX.Element | null {
       providers: providerPatch,
       terminalShell,
       defaultReviewer,
-      defaultReviewerModel
+      defaultReviewerModel,
+      reduceMotion
     }
     try {
       await updateSettings(patch)
@@ -360,15 +369,15 @@ export function SettingsDialog(): React.JSX.Element | null {
                         />
                       </div>
                     </div>
-                    {draft.clear || result ? (
+                    {draft.clear || result || (info?.hasKey && !info.envKey) ? (
                       <div className="provider-card__footer">
-                        {draft.clear ? (
+                        {info?.hasKey && !info.envKey ? (
                           <button
                             type="button"
-                            className="text-link text-link--danger"
-                            onClick={() => patchProvider(id, { clear: false })}
+                            className={`text-link ${draft.clear ? 'text-link--danger' : ''}`}
+                            onClick={() => patchProvider(id, { clear: !draft.clear, apiKey: '' })}
                           >
-                            Key will be cleared — undo
+                            {draft.clear ? 'Key will be cleared on save — undo' : 'Clear saved key'}
                           </button>
                         ) : null}
                         {result ? (
@@ -433,10 +442,22 @@ export function SettingsDialog(): React.JSX.Element | null {
                   <Terminal size={15} className="input-icon" />
                 </div>
               </div>
+              <div className="field">
+                <label>Reduce motion</label>
+                <button
+                  type="button"
+                  className={`switch ${reduceMotion ? 'is-on' : ''}`}
+                  role="switch"
+                  aria-checked={reduceMotion}
+                  onClick={() => setReduceMotion((value) => !value)}
+                >
+                  <span />
+                  {reduceMotion ? 'on' : 'off'}
+                </button>
+              </div>
               <div className="settings-runtime">
-                <span>App v{useAppStore.getState().appVersion}</span>
+                <span>App v{appVersion}</span>
                 <span>Linux Electron target</span>
-                <span>PTY via node-pty</span>
               </div>
             </div>
           </section>

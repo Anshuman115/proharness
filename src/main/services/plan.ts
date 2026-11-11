@@ -9,12 +9,11 @@ import {
   writeFileSync,
   type FSWatcher
 } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import type {
   GoalDetail,
   GoalSummary,
   PlanPhase,
-  PlanTask,
   TaskRef
 } from '@shared/types'
 
@@ -92,9 +91,14 @@ function taskIdentity(rest: string): { id: string | null; title: string } {
 
 function parsePhases(plan: string): PlanPhase[] {
   const lines = plan.split(/\r?\n/)
+  if (lines[0]?.trim() === '---') {
+    const end = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+    for (let i = 0; i <= end; i += 1) lines[i] = ''
+  }
   const phases: PlanPhase[] = []
   let current: PlanPhase | null = null
   const seenIds = new Set<string>()
+  let inFence = false
 
   const pushPhase = (title: string): PlanPhase => {
     const index = phases.length + 1
@@ -111,6 +115,11 @@ function parsePhases(plan: string): PlanPhase[] {
   }
 
   lines.forEach((line, index) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence
+      return
+    }
+    if (inFence) return
     const heading = line.match(/^##\s+(.+?)\s*$/)
     if (heading) {
       const rawTitle = stripInline(heading[1]).replace(/^Phase\s+\d+\s*[—:-]?\s*/i, '')
@@ -252,7 +261,7 @@ export class PlanService {
   ensureGoal(goalId: string): string {
     if (!GOAL_ID_RE.test(goalId)) throw new Error('Invalid goal id.')
     const dir = resolve(this.goalsRoot, goalId)
-    if (!dir.startsWith(resolve(this.goalsRoot) + '/')) throw new Error('Invalid goal path.')
+    if (!dir.startsWith(resolve(this.goalsRoot) + sep)) throw new Error('Invalid goal path.')
     if (!existsSync(dir) || !statSync(dir).isDirectory()) {
       throw new Error(`Goal "${goalId}" was not found under goals/.`)
     }
@@ -260,7 +269,7 @@ export class PlanService {
   }
 
   listGoals(): GoalSummary[] {
-    this.ensureRoot()
+    if (!existsSync(this.goalsRoot)) return []
     let entries
     try {
       entries = readdirSync(this.goalsRoot, { withFileTypes: true })
@@ -340,6 +349,7 @@ export class PlanService {
     const detail = this.readGoal(goalId)
     const task = detail.phases.flatMap((phase) => phase.tasks).find((item) => item.id === taskId)
     if (!task) throw new Error(`Task "${taskId}" was not found in ${goalId}.`)
+    const eol = detail.plan.includes('\r\n') ? '\r\n' : '\n'
     const lines = detail.plan.split(/\r?\n/)
     const line = lines[task.line - 1]
     if (line === undefined) throw new Error('Task line moved while updating the plan.')
@@ -349,7 +359,7 @@ export class PlanService {
       const next = lines[task.line]
       if (next !== completion) lines.splice(task.line, 0, completion)
     }
-    this.writePlan(goalId, lines.join('\n'))
+    this.writePlan(goalId, lines.join(eol))
     return this.readGoal(goalId)
   }
 
@@ -358,22 +368,20 @@ export class PlanService {
     const detail = this.readGoal(goalId)
     const task = detail.phases.flatMap((phase) => phase.tasks).find((item) => item.id === taskId)
     if (!task) throw new Error(`Task "${taskId}" was not found in ${goalId}.`)
+    const eol = detail.plan.includes('\r\n') ? '\r\n' : '\n'
     const lines = detail.plan.split(/\r?\n/)
     const entry = `  - ${note.replace(/\s+/g, ' ').trim()}`
-    if (!lines[task.line] || !lines[task.line].trim().startsWith('- ')) {
-      lines.splice(task.line, 0, entry)
-    } else {
-      let insertAt = task.line
-      while (insertAt < lines.length && /^\s{2,}[-*]\s+/.test(lines[insertAt])) insertAt += 1
-      lines.splice(insertAt, 0, entry)
+    let insertAt = task.line
+    while (
+      insertAt < lines.length &&
+      /^\s{2,}[-*]\s+/.test(lines[insertAt]) &&
+      !/^\s*[-*]\s+\[[ xX]\]/.test(lines[insertAt])
+    ) {
+      insertAt += 1
     }
-    this.writePlan(goalId, lines.join('\n'))
+    lines.splice(insertAt, 0, entry)
+    this.writePlan(goalId, lines.join(eol))
     return this.readGoal(goalId)
-  }
-
-  readPlanMarkdown(goalId: string): { detail: GoalDetail; tasks: PlanTask[] } {
-    const detail = this.readGoal(goalId)
-    return { detail, tasks: detail.phases.flatMap((phase) => phase.tasks) }
   }
 
   onChange(listener: (goals: GoalSummary[]) => void): () => void {
@@ -392,7 +400,7 @@ export class PlanService {
 
   private startWatching(): void {
     if (this.watcher) return
-    this.ensureRoot()
+    if (!existsSync(this.goalsRoot)) return
     try {
       this.watcher = watch(this.goalsRoot, { recursive: true }, () => this.emitChanged())
     } catch {

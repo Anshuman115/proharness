@@ -46,15 +46,10 @@ export class TerminalService {
     private readonly workspace: () => string,
     private readonly defaultShell: () => string
   ) {
-    const candidates = ['@homebridge/node-pty-prebuilt-multiarch', 'node-pty']
-    for (const candidate of candidates) {
-      try {
-        this.ptyModule = require(candidate) as PtyModule
-        this.ptyLoadError = null
-        break
-      } catch (error) {
-        this.ptyLoadError = `${candidate}: ${(error as Error).message}`
-      }
+    try {
+      this.ptyModule = require('@homebridge/node-pty-prebuilt-multiarch') as PtyModule
+    } catch (error) {
+      this.ptyLoadError = (error as Error).message
     }
   }
 
@@ -75,6 +70,7 @@ export class TerminalService {
   }
 
   create(input: TerminalCreateInput): TerminalCreateResult {
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(input.id)) throw new Error('Invalid terminal id.')
     if (this.sessions.has(input.id)) this.kill(input.id)
     const workspace = resolve(this.workspace())
     const requested = resolve(workspace, input.cwd || '.')

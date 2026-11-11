@@ -46,6 +46,7 @@ export function LoopPanel(): React.JSX.Element {
   const [permissionMode, setPermissionMode] = useState('acceptEdits')
   const [formError, setFormError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
+  const [showForm, setShowForm] = useState(false)
 
   const active = ['running', 'paused', 'stopping'].includes(loop.status)
   const providerInfo = settings?.providers.find((item) => item.id === reviewerProvider)
@@ -112,6 +113,7 @@ export function LoopPanel(): React.JSX.Element {
     setStarting(true)
     try {
       await startLoop(config)
+      setShowForm(false)
     } catch (error) {
       setFormError((error as Error).message)
     } finally {
@@ -132,7 +134,7 @@ export function LoopPanel(): React.JSX.Element {
         </p>
       </div>
 
-      {active || ['complete', 'error', 'stopped'].includes(loop.status) ? (
+      {active || (!showForm && ['complete', 'error', 'stopped'].includes(loop.status)) ? (
         <div className="loop-run">
           <div className="loop-run__head">
             <div className={`loop-state loop-state--${loop.status}`}>
@@ -271,8 +273,8 @@ export function LoopPanel(): React.JSX.Element {
           </div>
 
           {!active ? (
-            <button type="button" className="btn btn--quiet btn--full" onClick={() => void start()}>
-              <Play size={13} /> Start another run
+            <button type="button" className="btn btn--quiet btn--full" onClick={() => setShowForm(true)}>
+              <Play size={13} /> Configure a new run
             </button>
           ) : null}
         </div>

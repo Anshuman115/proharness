@@ -5,6 +5,7 @@
  * On macOS this script downloads the same npm artifact explicitly.
  */
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -16,15 +17,26 @@ const stage = join(root, '.cache', 'linux-sdk')
 const target = join(stage, 'claude')
 const tarPath = join(stage, 'package.tgz')
 
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+
 if (process.platform === 'darwin' || process.platform === 'linux') {
+  const sdkDir = join(root, 'node_modules/@anthropic-ai/claude-agent-sdk')
+  const manifest = JSON.parse(readFileSync(join(sdkDir, 'manifest.json'), 'utf8'))
+  const expected = manifest.platforms?.['linux-x64']?.checksum
+  if (!expected) throw new Error('The SDK manifest has no linux-x64 checksum.')
+
   if (existsSync(target)) {
-    console.log('[proharness] Linux Claude Code binary already staged:', target)
-    process.exit(0)
+    if (sha256(target) === expected) {
+      console.log('[proharness] Linux Claude Code binary already staged:', target)
+      process.exit(0)
+    }
+    console.warn('[proharness] staged binary does not match the SDK manifest; downloading again.')
+    rmSync(target, { force: true })
   }
 
-  const sdkPackage = JSON.parse(
-    readFileSync(join(root, 'node_modules/@anthropic-ai/claude-agent-sdk/package.json'), 'utf8')
-  )
+  const sdkPackage = JSON.parse(readFileSync(join(sdkDir, 'package.json'), 'utf8'))
   const version = sdkPackage.optionalDependencies?.['@anthropic-ai/claude-agent-sdk-linux-x64']
   if (!version) throw new Error('Could not determine the Linux SDK binary version.')
 
@@ -48,6 +60,11 @@ if (process.platform === 'darwin' || process.platform === 'linux') {
   execFileSync('tar', ['-xzf', tarPath, '-C', extract, '--strip-components=1'], { stdio: 'inherit' })
   const candidate = join(extract, 'claude')
   if (!existsSync(candidate)) throw new Error('The Linux SDK tarball did not contain a claude binary.')
+  const actual = sha256(candidate)
+  if (actual !== expected) {
+    rmSync(extract, { recursive: true, force: true })
+    throw new Error(`Checksum mismatch for the Linux Claude binary (expected ${expected}, got ${actual}).`)
+  }
   execFileSync('cp', [candidate, target])
   execFileSync('chmod', ['+x', target])
   rmSync(extract, { recursive: true, force: true })

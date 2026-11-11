@@ -344,6 +344,12 @@ export type DelegateEvent =
   | { type: 'done'; requestId: string; text: string; model: string; usage: DelegateUsage | null }
   | { type: 'error'; requestId: string; message: string }
 
+export interface ProviderTestOverrides {
+  baseUrl?: string
+  model?: string
+  apiKey?: string
+}
+
 export interface ProviderTestResult {
   ok: boolean
   message: string

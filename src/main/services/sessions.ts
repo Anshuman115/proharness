@@ -102,19 +102,18 @@ export class SessionManager {
     session.permissionMode = mode
   }
 
-  setModel(tabId: string, model: string): void {
-    const session = this.sessions.get(tabId)
-    if (!session || !model.trim()) return
-    session.model = model.trim()
-  }
-
-  async send(tabId: string, prompt: string): Promise<void> {
+  /** Validates synchronously, then runs the turn in the background. */
+  start(tabId: string, prompt: string): void {
     const session = this.sessions.get(tabId)
     if (!session) throw new Error('This session no longer exists. Open a new tab.')
     if (!prompt.trim()) throw new Error('Type a message before sending.')
     if (session.busy) throw new Error('This session is already working on a turn.')
-
     session.busy = true
+    void this.run(session, prompt)
+  }
+
+  private async run(session: RuntimeSession, prompt: string): Promise<void> {
+    const tabId = session.tabId
     const abortController = new AbortController()
     session.abortController = abortController
     this.emit(tabId, { type: 'status', status: 'thinking' })

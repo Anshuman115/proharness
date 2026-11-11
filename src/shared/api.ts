@@ -13,6 +13,7 @@ import type {
   PermissionDecision,
   PermissionRequest,
   ProviderId,
+  ProviderTestOverrides,
   ProviderTestResult,
   PublicSettings,
   SessionCreateInput,
@@ -39,6 +40,7 @@ export interface ProHarnessApi {
 
   goals: {
     list(): Promise<GoalSummary[]>
+    init(): Promise<string>
     read(goalId: string): Promise<GoalDetail>
     toggleTask(goalId: string, taskId: string, checked: boolean): Promise<GoalDetail>
     onChanged(listener: (goals: GoalSummary[]) => void): Unsubscribe
@@ -79,7 +81,7 @@ export interface ProHarnessApi {
   providers: {
     delegate(request: DelegateRequest): Promise<{ requestId: string }>
     cancel(requestId: string): Promise<void>
-    test(provider: ProviderId, model?: string): Promise<ProviderTestResult>
+    test(provider: ProviderId, overrides?: ProviderTestOverrides): Promise<ProviderTestResult>
     onEvent(listener: (event: DelegateEvent) => void): Unsubscribe
   }
 

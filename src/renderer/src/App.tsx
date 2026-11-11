@@ -45,22 +45,27 @@ export default function App(): React.JSX.Element {
     )
 
     const onKey = (event: KeyboardEvent): void => {
-      const meta = event.metaKey || event.ctrlKey
-      if (!meta) return
-      if (event.key === 't') {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.terminal-host')) return
+      const isMac = navigator.platform.toLowerCase().includes('mac')
+      // Linux/Windows use Ctrl+Shift so plain Ctrl shortcuts keep working in text fields.
+      const meta = isMac ? event.metaKey : event.ctrlKey && event.shiftKey
+      if (!meta || event.altKey) return
+      const key = event.key.toLowerCase()
+      if (key === 't') {
         event.preventDefault()
         void useAppStore.getState().createTab({ activate: true })
-      } else if (event.key === 'w') {
+      } else if (key === 'w') {
         event.preventDefault()
         const id = useAppStore.getState().activeTabId
         if (id) void useAppStore.getState().closeTab(id)
-      } else if (event.key === ',') {
+      } else if (key === ',' || key === '<') {
         event.preventDefault()
         useAppStore.getState().setSettingsOpen(true)
-      } else if (event.key === 'j') {
+      } else if (key === 'j') {
         event.preventDefault()
         useAppStore.getState().toggleLeft()
-      } else if (event.key === 'b') {
+      } else if (key === 'b') {
         event.preventDefault()
         useAppStore.getState().toggleRight()
       }

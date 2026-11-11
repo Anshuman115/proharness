@@ -61,3 +61,14 @@ describe('GitService', () => {
     expect((await service.summary()).clean).toBe(true)
   })
 })
+
+describe('GitService untracked files', () => {
+  it('counts untracked lines and includes them in the review diff', async () => {
+    writeFileSync(join(root, 'new.txt'), 'a\nb\nc\n')
+    const summary = await service.summary()
+    expect(summary.files.find((file) => file.path === 'new.txt')).toMatchObject({ status: 'untracked', additions: 3 })
+    const review = await service.reviewDiff()
+    expect(review.diff).toContain('+++ b/new.txt')
+    expect(review.diff).toContain('+c')
+  })
+})

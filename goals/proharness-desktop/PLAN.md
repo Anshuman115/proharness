@@ -50,7 +50,7 @@ when the file merely exists.
 - [x] **5.3** Manual delegation panel with streaming output and send-to-chat
 - [x] **5.4** Provider connectivity test action
 - [ ] **5.5** Live connectivity test for all three providers with real keys
-- [ ] **5.6** Offline contract tests for SSE parsing, provider errors, and cancelled requests
+- [x] **5.6** Offline contract tests for SSE parsing, provider errors, and cancelled requests
 
 ## Phase 6 — Autonomous task loop
 
@@ -59,7 +59,8 @@ when the file merely exists.
 - [x] **6.3** Independent reviewer gate with bounded revision rounds and fail-closed parsing
 - [x] **6.4** Commit implementation, check off task, commit checklist update, and repeat
 - [x] **6.5** Pause/resume/stop controls, run limit, live output, review card, and structured log
-- [ ] **6.6** End-to-end loop smoke test against a disposable git repository with live models
+- [x] **6.6** End-to-end loop test against a disposable git repository with a mock reviewer
+- [ ] **6.8** Run the loop against live reviewer models
 - [ ] **6.7** Multi-goal queue scheduling
 
 ## Phase 7 — Hardening

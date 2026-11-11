@@ -17,8 +17,9 @@ through raw filesystem access.
   permission mode.
 - **Permission dialogs** — allow once, always allow (SDK rule), deny. Risk-labelled, origin-aware,
   fail-closed. Loop-originated requests are labelled.
-- **Embedded terminal** — xterm.js with a `node-pty` PTY rooted at the workspace. If the native
-  module cannot load, it degrades to a pipe shell and says so in the UI.
+- **Embedded terminal** — xterm.js with a PTY (`@homebridge/node-pty-prebuilt-multiarch`, which ships
+  N-API prebuilds for Linux x64/arm64) rooted at the workspace. If the native module cannot load, it
+  degrades to a pipe shell and says so in the UI.
 - **Diff review** — branch/ahead/behind, per-file stats, unified diff with line numbers, untracked
   files, copy, reveal, and a two-step restore for tracked files.
 - **Cross-model delegation** — OpenAI, DeepSeek, and Kimi over OpenAI-compatible streaming
@@ -113,9 +114,10 @@ The app registers an in-process `proharness` MCP server with every session:
 | `delegate_model` | Ask OpenAI / DeepSeek / Kimi |
 | `review_changes` | Another model reviews the working-tree diff |
 
-The tools are auto-approved because they are the harness's own trusted surface. `plan_complete_task`
-is still instructed to be used only after verification. The loop itself does not rely on the agent
-checking its own task; it owns the commit and checkoff.
+The plan and `git_status` tools run without a prompt because they only touch the local plan and read
+git state. `delegate_model` and `review_changes` send repository content to a third-party API, so they
+go through the normal permission dialog. Inside the autonomous loop, `plan_complete_task` is disabled
+for the implementer: the loop owns the commit and the checkoff.
 
 ## Autonomous task loop
 
@@ -163,7 +165,7 @@ src/
       mcp.ts              in-process proharness MCP server
       providers.ts        OpenAI-compatible streaming + test
       review.ts           review prompt + fail-closed verdict parser
-      terminal.ts         node-pty with pipe fallback
+      terminal.ts         PTY with pipe fallback
       task-loop.ts        autonomous state machine
   preload/index.ts        contextBridge API
   renderer/src/           React UI (Zustand)
@@ -171,6 +173,19 @@ src/
 
 The renderer has no Node integration. `contextIsolation` is on, `nodeIntegration` is off. The main
 process owns all filesystem, git, secret, process, and network access.
+
+## Keyboard shortcuts
+
+On Linux the shortcuts use **Ctrl+Shift** so plain Ctrl keys (Ctrl+W, Ctrl+T, Ctrl+B in the shell)
+keep working in the terminal and text fields. On macOS they use **⌘**.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+Shift+T | New session tab |
+| Ctrl+Shift+W | Close session tab |
+| Ctrl+Shift+, | Settings |
+| Ctrl+Shift+J | Toggle plan rail |
+| Ctrl+Shift+B | Toggle workbench |
 
 ## Scripts
 
@@ -180,8 +195,7 @@ pnpm typecheck    # main + renderer TypeScript
 pnpm build        # typecheck + production build to out/
 pnpm dist:linux   # build AppImage + .deb into release/
 pnpm dist:dir     # unpacked Linux directory
-pnpm rebuild      # rebuild native deps against Electron (if needed)
-pnpm test         # unit tests (plan parser, diff parser, review verdicts)
+pnpm test         # unit tests (plan, diff, review, git, providers, task loop)
 ```
 
 ## Packaging Linux
@@ -197,9 +211,9 @@ arm64 Claude binary) if you need ARM64 Linux.
 The build is cross-platform-aware. `scripts/fetch-linux-sdk.mjs` downloads the matching Linux
 Claude Code binary into `.cache/linux-sdk/` (about 326 MB), and `scripts/after-pack.cjs` copies it
 to `resources/claude` in the packaged app. On Linux, pnpm's optional dependency resolution normally
-provides the binary itself. `node-pty` and the Linux prebuilds are unpacked from the asar so native
-modules can load. The `@homebridge/node-pty-prebuilt-multiarch` package supplies the Linux x64 PTY
-binary; the app also keeps a pipe-shell fallback.
+provides the binary itself. The download is verified against the SHA-256 checksum in the Agent SDK's
+`manifest.json`. The PTY package and its prebuilds are unpacked from the asar so the native module can
+load; the app also keeps a pipe-shell fallback.
 
 The AppImage and `.deb` are built and structurally verified on macOS. Launching the AppImage on a
 real Linux desktop is the remaining hardening task in `goals/proharness-desktop/PLAN.md`.
@@ -219,8 +233,9 @@ Run `claude --version` in a terminal. If you use API-key auth, set `ANTHROPIC_AP
 in Settings. The Agent SDK also honors a custom executable path in Settings.
 
 **The terminal says `pipe`.**
-`node-pty` could not load for the current Electron ABI. Run `pnpm rebuild`, or install build tools
-and reinstall `node-pty`. The app remains usable, but full-screen programs will not work.
+The PTY module could not load or could not open a pseudo-terminal (for example inside a restrictive
+sandbox). Reinstall dependencies so `@homebridge/node-pty-prebuilt-multiarch` places its prebuild. The
+app remains usable, but full-screen programs will not work.
 
 **Delegation returns 401/404.**
 Check the provider base URL (including `/v1` where required), model id, and key. Use the **Test**

@@ -36,6 +36,7 @@ const api: ProHarnessApi = {
 
   goals: {
     list: () => ipcRenderer.invoke(CH.goalsList),
+    init: () => ipcRenderer.invoke(CH.goalsInit),
     read: (goalId) => ipcRenderer.invoke(CH.goalsRead, goalId),
     toggleTask: (goalId, taskId, checked) =>
       ipcRenderer.invoke(CH.goalsToggleTask, goalId, taskId, checked),
@@ -77,7 +78,7 @@ const api: ProHarnessApi = {
   providers: {
     delegate: (request) => ipcRenderer.invoke(CH.providerDelegateStart, request),
     cancel: (requestId) => ipcRenderer.invoke(CH.providerDelegateCancel, requestId),
-    test: (provider, model) => ipcRenderer.invoke(CH.providerTest, provider, model),
+    test: (provider, overrides) => ipcRenderer.invoke(CH.providerTest, provider, overrides),
     onEvent: (listener) => subscribe<[DelegateEvent]>(CH.delegateEvent, listener)
   },
 

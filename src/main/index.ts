@@ -29,13 +29,12 @@ if (!gotLock) {
     app.setName('ProHarness')
     app.setAppUserModelId('dev.proharness.app')
 
-    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-      callback(false)
+    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(permission === 'clipboard-sanitized-write')
     })
 
     const settings = new SettingsService()
     const plan = new PlanService(() => settings.workspacePath)
-    plan.ensureRoot()
     const git = new GitService(() => settings.workspacePath)
     const providers = new ProviderService(settings)
     const permissions = new PermissionBroker()
@@ -120,7 +119,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       spellcheck: false
     }
   })

@@ -18,6 +18,7 @@ import type { SettingsService } from './settings'
 import { buildReviewPrompt, parseReview } from './review'
 
 const TASK_TIMEOUT_MS = 20 * 60_000
+const LOOP_DISALLOWED_TOOLS = ['mcp__proharness__plan_complete_task']
 
 function emptyState(): LoopState {
   return {
@@ -257,6 +258,7 @@ export class TaskLoopService {
     timer.unref()
     this.state.liveOutput = ''
     if (signal.aborted) controller.abort()
+    let lastError: string | null = null
 
     try {
       const result = await this.claude.runTurn({
@@ -272,15 +274,17 @@ export class TaskLoopService {
         alwaysAllowed: this.alwaysAllowed,
         signal: controller.signal,
         onEvent: (event) => {
-          if (event.type === 'delta') this.appendOutput(event.text)
-          if (event.type === 'notice') {
+          if (event.type === 'delta' && event.block === 'text') this.appendOutput(event.text)
+          if (event.type === 'notice' && event.message !== lastError) {
             this.log(event.level, event.message)
           }
-          if (event.type === 'error') {
+          if (event.type === 'error' && event.message !== lastError) {
+            lastError = event.message
             this.log('error', event.message)
           }
         },
         title,
+        disallowedTools: LOOP_DISALLOWED_TOOLS,
         planService: this.plan,
         gitService: this.git,
         providerService: this.providers,
@@ -312,7 +316,7 @@ export class TaskLoopService {
     }
   }
 
-  private async implementPrompt(goal: GoalDetail, task: TaskRef): Promise<string> {
+  private implementPrompt(goal: GoalDetail, task: TaskRef): string {
     return [
       'You are the implementation agent in an autonomous ProHarness task loop.',
       `Goal: ${goal.title} (${goal.id})`,
@@ -328,7 +332,7 @@ export class TaskLoopService {
     ].join('\n')
   }
 
-  private async revisionPrompt(goal: GoalDetail, task: TaskRef, reviewNotes: string): Promise<string> {
+  private revisionPrompt(goal: GoalDetail, task: TaskRef, reviewNotes: string): string {
     return [
       'An independent reviewer examined your working-tree implementation and requested changes.',
       `Goal: ${goal.title} (${goal.id})`,
@@ -337,6 +341,7 @@ export class TaskLoopService {
       'Reviewer findings:',
       reviewNotes,
       '',
+      `Read goals/${goal.id}/DESIGN.md and goals/${goal.id}/PLAN.md if you need the original context.`,
       'Fix the findings in the working tree. Keep the original task scope.',
       'Do not commit and do not check off the task. Re-run relevant verification after fixing.',
       'Finish with a short list of what you changed in response to the review.'
@@ -416,10 +421,10 @@ export class TaskLoopService {
     this.setStep('implementing')
     this.log('info', `Implementing ${task.taskId}: ${task.taskTitle}`)
 
-    let agent = await this.runAgent(await this.implementPrompt(goal, task), null, signal, `Task ${task.taskId}`)
+    let agent = await this.runAgent(this.implementPrompt(goal, task), null, signal, `Task ${task.taskId}`)
     if (signal.aborted) throw new Error('aborted')
-    if (agent.aborted) throw new Error('The implementer was interrupted.')
     if (agent.error) throw new Error(agent.error)
+    if (agent.aborted) throw new Error('The implementer was interrupted.')
     record.attempts = 1
 
     await this.checkpoint(signal)
@@ -440,13 +445,14 @@ export class TaskLoopService {
       this.setStep('revising')
       this.log('warn', `Sending reviewer findings back for revision (round ${rounds}/${config.maxReviewRounds}).`)
       const revision = await this.runAgent(
-        await this.revisionPrompt(goal, task, review.notes),
+        this.revisionPrompt(goal, task, review.notes),
         agent.sessionId,
         signal,
         `Task ${task.taskId} revision ${rounds}`
       )
-      if (signal.aborted || revision.aborted) throw new Error('aborted')
+      if (signal.aborted) throw new Error('aborted')
       if (revision.error) throw new Error(revision.error)
+      if (revision.aborted) throw new Error('The implementer was interrupted.')
       agent = revision
       await this.checkpoint(signal)
       review = await this.review(goal, task, config, signal)
@@ -468,7 +474,7 @@ export class TaskLoopService {
     this.setStep('marking')
     this.plan.setTaskChecked(goal.id, task.taskId, true)
     this.log('info', `Checked off ${task.taskId} in ${goal.id}/PLAN.md.`)
-    if (config.commit) {
+    if (config.commit && !(await this.git.summary()).clean) {
       try {
         const planCommit = await this.git.commitAll(
           `chore(plan): complete ${task.taskId} in ${goal.id}`

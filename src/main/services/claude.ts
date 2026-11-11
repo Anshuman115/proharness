@@ -2,6 +2,7 @@ import {
   query,
   type CanUseTool,
   type PermissionResult,
+  type PermissionUpdate,
   type SDKMessage
 } from '@anthropic-ai/claude-agent-sdk'
 import type {
@@ -27,6 +28,15 @@ const SYSTEM_PROMPT_APPEND = [
 
 const TOOL_RESULT_LIMIT = 60_000
 
+// Harness tools that only touch the local plan or read git state. Delegation
+// tools send repository content to a third-party API, so they go through the
+// normal permission flow unless the caller auto-approves.
+const TRUSTED_TOOLS = new Set(
+  ['plan_list', 'plan_read', 'plan_next_task', 'plan_complete_task', 'plan_add_note', 'git_status'].map(
+    (name) => `mcp__proharness__${name}`
+  )
+)
+
 export interface RunTurnOptions {
   cwd: string
   prompt: string
@@ -37,11 +47,13 @@ export interface RunTurnOptions {
   originId: string
   originLabel: string
   autoApprove: boolean
+  /** Exact permission rules the user chose to always allow for this conversation. */
   alwaysAllowed: Set<string>
   signal: AbortSignal
   onEvent: (event: SessionEvent) => void
   title?: string
   retryOnInvalidResume?: boolean
+  disallowedTools?: string[]
   planService: PlanService
   gitService: GitService
   providerService: ProviderService
@@ -116,6 +128,17 @@ function mapAssistantBlocks(content: unknown): AssistantBlock[] {
   return blocks
 }
 
+function allowRules(updates: PermissionUpdate[]): string[] {
+  const rules: string[] = []
+  for (const update of updates) {
+    if (update.type !== 'addRules' || update.behavior !== 'allow') continue
+    for (const rule of update.rules) {
+      rules.push(rule.ruleContent ? `${rule.toolName}(${rule.ruleContent})` : rule.toolName)
+    }
+  }
+  return rules
+}
+
 function archiveText(blocks: AssistantBlock[]): string {
   return blocks
     .filter((block): block is Extract<AssistantBlock, { type: 'text' }> => block.type === 'text')
@@ -130,8 +153,7 @@ export class ClaudeService {
 
   private buildCanUseTool(options: RunTurnOptions): CanUseTool {
     return async (toolName, input, sdkOptions): Promise<PermissionResult> => {
-      const trustedMcp = toolName.startsWith('mcp__proharness__')
-      if (trustedMcp || options.autoApprove || options.alwaysAllowed.has(toolName)) {
+      if (TRUSTED_TOOLS.has(toolName) || options.autoApprove) {
         return { behavior: 'allow', updatedInput: input, toolUseID: sdkOptions.toolUseID }
       }
 
@@ -164,15 +186,18 @@ export class ClaudeService {
         }
       }
 
-      if (outcome.remember) {
-        options.alwaysAllowed.add(toolName)
-        if (sdkOptions.suggestions?.length) {
-          return {
-            behavior: 'allow',
-            updatedInput: input,
-            updatedPermissions: sdkOptions.suggestions,
-            toolUseID: sdkOptions.toolUseID
-          }
+      if (outcome.remember && sdkOptions.suggestions?.length) {
+        for (const rule of allowRules(sdkOptions.suggestions)) options.alwaysAllowed.add(rule)
+        // Keep remembered rules in memory for this conversation instead of
+        // writing them into the user's or project's settings files.
+        return {
+          behavior: 'allow',
+          updatedInput: input,
+          updatedPermissions: sdkOptions.suggestions.map((update) => ({
+            ...update,
+            destination: 'session' as const
+          })),
+          toolUseID: sdkOptions.toolUseID
         }
       }
 
@@ -206,6 +231,7 @@ export class ClaudeService {
     let resumeInvalid = false
     let resumeInvalidReason = ''
     const startedMessages = new Set<string>()
+    const messageBlocks = new Map<string, AssistantBlock[]>()
     let currentStreamMessageId: string | null = null
     let currentStreamKind: 'text' | 'thinking' | null = null
 
@@ -219,10 +245,11 @@ export class ClaudeService {
           permissionMode: options.permissionMode,
           allowDangerouslySkipPermissions: options.permissionMode === 'bypassPermissions',
           includePartialMessages: true,
-          forwardSubagentText: true,
           canUseTool: this.buildCanUseTool(options),
           mcpServers: { proharness: mcp },
-          settingSources: ['project'],
+          settingSources: ['user', 'project', 'local'],
+          disallowedTools: options.disallowedTools,
+          allowedTools: options.alwaysAllowed.size ? [...options.alwaysAllowed] : undefined,
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
@@ -236,7 +263,10 @@ export class ClaudeService {
       })
 
       for await (const message of stream as AsyncIterable<SDKMessage>) {
-        if (options.signal.aborted) break
+        if (options.signal.aborted) {
+          options.onEvent({ type: 'notice', level: 'info', message: 'Stopped by user.' })
+          break
+        }
         if (message.type === 'system' && message.subtype === 'init') {
           const sessionId = (message as unknown as { session_id?: string }).session_id
           if (sessionId) sdkSessionId = sessionId
@@ -313,7 +343,16 @@ export class ClaudeService {
             startedMessages.add(messageId)
             options.onEvent({ type: 'message_start', messageId })
           }
-          const blocks = mapAssistantBlocks(message.message.content)
+          const incoming = mapAssistantBlocks(message.message.content)
+          const blocks = [...(messageBlocks.get(messageId) || [])]
+          for (const block of incoming) {
+            if (block.type === 'tool_use') {
+              if (!blocks.some((item) => item.type === 'tool_use' && item.id === block.id)) blocks.push(block)
+            } else {
+              blocks.push(block)
+            }
+          }
+          messageBlocks.set(messageId, blocks)
           if (message.error) {
             options.onEvent({
               type: 'notice',
@@ -321,9 +360,9 @@ export class ClaudeService {
               message: `Claude reported ${message.error}.`
             })
           }
-          if (blocks.length) {
+          if (incoming.length) {
             options.onEvent({ type: 'message', messageId, blocks })
-            const assistantText = archiveText(blocks)
+            const assistantText = archiveText(incoming)
             if (assistantText && !text.endsWith(assistantText)) text += assistantText
           }
           continue
@@ -378,6 +417,7 @@ export class ClaudeService {
                 'Claude Code is not authenticated. Run `claude` in a terminal and use /login, or add an Anthropic API key in Settings.'
             })
           }
+          if (meta.isError) runError = meta.resultText || 'Claude finished with an error.'
           options.onEvent({ type: 'result', meta })
           continue
         }
@@ -405,7 +445,6 @@ export class ClaudeService {
         } else {
           runError = message
           options.onEvent({ type: 'error', message })
-          options.onEvent({ type: 'notice', level: 'error', message })
         }
       }
     } finally {
@@ -424,8 +463,7 @@ export class ClaudeService {
       return this.runTurn({
         ...options,
         resume: null,
-        retryOnInvalidResume: false,
-        alwaysAllowed: options.alwaysAllowed
+        retryOnInvalidResume: false
       })
     }
 

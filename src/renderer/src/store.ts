@@ -15,8 +15,7 @@ import type {
   PublicSettings,
   SessionEvent,
   SessionStatus,
-  SettingsPatch,
-  TaskRef
+  SettingsPatch
 } from '@shared/types'
 
 export interface ChatMessage {
@@ -105,6 +104,9 @@ function mergeIncoming(existing: AssistantBlock[], incoming: AssistantBlock[]): 
     const old = previousTools.get(block.id)
     return old ? { ...block, result: old.result, isError: old.isError } : block
   })
+  if (!merged.some((block) => block.type === 'thinking')) {
+    merged.unshift(...existing.filter((block) => block.type === 'thinking'))
+  }
   for (const block of existing) {
     if (block.type === 'tool_use' && !merged.some((item) => item.type === 'tool_use' && item.id === block.id)) {
       merged.push(block)
@@ -145,6 +147,11 @@ function appendDelta(message: ChatMessage, block: 'text' | 'thinking', text: str
     blocks.push({ type, text } as AssistantBlock)
   }
   return { ...message, blocks, streaming: true }
+}
+
+function settleStreaming(tab: ChatTab): ChatTab {
+  if (!tab.messages.some((message) => message.streaming)) return tab
+  return { ...tab, messages: tab.messages.map((message) => (message.streaming ? { ...message, streaming: false } : message)) }
 }
 
 function applyToolResult(tab: ChatTab, toolUseId: string, content: string, isError: boolean): ChatTab {
@@ -231,7 +238,6 @@ export interface AppStore {
   resumeLoop: () => Promise<void>
   stopLoop: () => Promise<void>
   handleLoopEvent: (event: LoopEvent) => void
-  insertDelegateResult: () => void
 }
 
 let toastTimer: number | null = null
@@ -468,6 +474,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       switch (event.type) {
         case 'status':
           next = { ...next, status: event.status }
+          if (event.status === 'idle' || event.status === 'error') next = settleStreaming(next)
           break
         case 'init':
           next = { ...next, model: event.model, sdkSessionId: event.sdkSessionId }
@@ -499,15 +506,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
           }
           break
         case 'result':
-          next = {
+          next = settleStreaming({
             ...next,
             status: 'idle',
             lastCost: event.meta.costUsd || next.lastCost
-          }
+          })
           break
         case 'error':
           next = {
-            ...next,
+            ...settleStreaming(next),
             status: 'error',
             messages: [...next.messages, systemMessage(event.message, 'error')]
           }
@@ -744,21 +751,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
       }
     })
-  },
-
-  insertDelegateResult: () => {
-    const id = get().activeDelegateId
-    const result = id ? get().delegateRequests[id] : null
-    const tabId = get().activeTabId
-    if (!result?.text || !tabId) return
-    const current = get().drafts[tabId] || ''
-    set((state) => ({
-      drafts: {
-        ...state.drafts,
-        [tabId]: `${current.trim() ? `${current.trim()}\n\n` : ''}Consider this ${result.provider} review:\n\n${result.text}`
-      }
-    }))
-    window.dispatchEvent(new CustomEvent('proharness:focus-composer'))
   },
 
   startLoop: async (config) => {
