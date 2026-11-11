@@ -228,6 +228,25 @@ describe('WorkspaceService.restartAgents', () => {
     expect(calls).toEqual(['broker.cancelAll', 'loop.drain', 'consult.dispose', 'sessions.dispose', 'terminal.dispose'])
     expect(gate.blocked).toBe(false)
   })
+
+  it('runs every drain step and rethrows the first error', async () => {
+    const { deps, calls, loop, consult, sessions, terminal, gate } = makeDeps()
+    const first = new Error('loop failed')
+    loop.drain.mockImplementationOnce(async () => {
+      calls.push('loop.drain')
+      throw first
+    })
+    consult.dispose.mockImplementationOnce(async () => {
+      calls.push('consult.dispose')
+      throw new Error('consult failed')
+    })
+    const service = new WorkspaceService(deps)
+    await expect(service.restartAgents()).rejects.toBe(first)
+    expect(calls).toEqual(['broker.cancelAll', 'loop.drain', 'consult.dispose', 'sessions.dispose', 'terminal.dispose'])
+    expect(sessions.dispose).toHaveBeenCalledTimes(1)
+    expect(terminal.dispose).toHaveBeenCalledTimes(1)
+    expect(gate.blocked).toBe(false)
+  })
 })
 
 describe('WorkspaceService.setLoginShare', () => {

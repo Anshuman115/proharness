@@ -1,19 +1,25 @@
 import { describe, expect, it } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { SessionEvent } from '../src/shared/types'
 import { OmpAgent } from '../src/main/omp/agent'
 import { HostRegistry } from '../src/main/host/registry'
 import type { SshHost } from '../src/main/host/ssh'
 import { GitService } from '../src/main/services/git'
+import { LoginShare } from '../src/main/services/login-share'
 import { OmpService } from '../src/main/services/omp'
 import { PlanService } from '../src/main/services/plan'
 import { UiBroker } from '../src/main/services/ui-broker'
 
 /**
  * Exercises an SSH workspace end to end. Opt in with PROHARNESS_SSH_HOST=<alias>
- * (optionally PROHARNESS_SSH_PATH and PROHARNESS_SSH_MODEL).
+ * (optionally PROHARNESS_SSH_PATH and PROHARNESS_SSH_MODEL). Set
+ * PROHARNESS_SSH_SHARE_LOGINS=1 to tunnel this Mac's omp logins to the host.
  */
 const hostId = process.env.PROHARNESS_SSH_HOST || ''
 const model = process.env.PROHARNESS_SSH_MODEL || 'commandcode/deepseek/deepseek-v4.1-flash'
+const shareLogins = process.env.PROHARNESS_SSH_SHARE_LOGINS === '1'
 
 describe.skipIf(!hostId)('ssh workspace live', () => {
   it('reads git and plans, and runs an omp turn on the remote host', async () => {
@@ -21,6 +27,11 @@ describe.skipIf(!hostId)('ssh workspace live', () => {
     const host = (await registry.connect(hostId)) as SshHost
     const home = await host.home()
     const root = `${home}/.cache/proharness-live-${Date.now()}`
+    const localCache = shareLogins ? mkdtempSync(join(tmpdir(), 'ph-ssh-live-')) : ''
+    const localOmp = localCache
+      ? new OmpService(() => '', () => localCache, join(localCache, 'omp-status.json'), () => registry.local)
+      : null
+    const share = localOmp ? new LoginShare(() => localOmp.binary(registry.local), () => true) : null
     try {
       await host.run(`mkdir -p ${root} && cd ${root} && git init -q -b main && git config user.email t@t && git config user.name t && echo hi > a.txt && git add -A && git commit -qm init`)
       const git = new GitService(() => host, () => root)
@@ -38,7 +49,13 @@ describe.skipIf(!hostId)('ssh workspace live', () => {
       broker.setEmitters((request) => broker.respond({ requestId: request.id, value: request.options[0] ?? '' }), () => undefined)
       const events: SessionEvent[] = []
       let hostCalls = 0
-      const omp = new OmpService(() => '', () => root, `${home}/.cache/proharness-live-status-${Date.now()}.json`, () => host)
+      const omp = new OmpService(
+        () => '',
+        () => root,
+        `${home}/.cache/proharness-live-status-${Date.now()}.json`,
+        () => host,
+        share ? (target) => share.prelude(target) : undefined
+      )
       const agent = new OmpAgent({
         spawn: await omp.spawner(host),
         model,
@@ -75,6 +92,10 @@ describe.skipIf(!hostId)('ssh workspace live', () => {
         await agent.close()
       }
     } finally {
+      if (share) {
+        await share.detach(host)
+        share.dispose()
+      }
       await host.run(`rm -rf ${root}`)
       registry.dispose()
     }

@@ -38,9 +38,7 @@ async function sessionCwd(host: WorkspaceHost, file: string): Promise<string | n
     try {
       const entry = JSON.parse(line) as Record<string, unknown>
       return typeof entry.cwd === 'string' ? entry.cwd : null
-    } catch {
-      // Unreadable or malformed line.
-    }
+    } catch {}
   }
   return null
 }

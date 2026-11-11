@@ -38,9 +38,8 @@ interface OmpTarget {
 }
 
 /**
- * Locates omp, captures the login-shell environment, and caches the model
- * catalog omp reports for the user's configured providers. Every operation
- * runs on the active workspace host.
+ * Locates omp, owns the per-host overlay, and caches the per-host model
+ * catalog. Every operation runs on the active workspace host.
  */
 export class OmpService {
   private status: OmpStatus
@@ -73,9 +72,7 @@ export class OmpService {
         const cached = JSON.parse(readFileSync(file, 'utf8')) as OmpStatus
         if (Array.isArray(cached.models)) return { ...cached, hostId, ok: false, error: null }
       }
-    } catch {
-      // Rebuild below.
-    }
+    } catch {}
     return { hostId, ok: false, path: null, version: null, error: null, defaultModel: null, models: [], checkedAt: 0 }
   }
 

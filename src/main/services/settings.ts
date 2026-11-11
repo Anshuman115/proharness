@@ -179,9 +179,7 @@ export class SettingsService {
     for (let n = 2; existsSync(target); n += 1) target = `${this.filePath}.corrupt-${n}`
     try {
       renameSync(this.filePath, target)
-    } catch {
-      // Best effort.
-    }
+    } catch {}
   }
 
   /** Reads per-host prefs; settings from before v3 keep their flat fields as the local prefs. */
@@ -236,9 +234,7 @@ export class SettingsService {
     renameSync(tmp, this.filePath)
     try {
       chmodSync(this.filePath, 0o600)
-    } catch {
-      // Best effort.
-    }
+    } catch {}
   }
 
   get workspacePath(): string {

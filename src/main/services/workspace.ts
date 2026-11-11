@@ -133,11 +133,20 @@ export class WorkspaceService {
   private async drainAgents(): Promise<void> {
     // Cancel pending approvals before waiting on the loop, so an approval-blocked
     // run can observe its abort instead of holding the transition open.
-    this.deps.broker.cancelAll()
-    await this.deps.loop.drain()
-    await this.deps.consult.dispose()
-    await this.deps.sessions.dispose()
-    this.deps.terminal.dispose()
+    const errors: unknown[] = []
+    const step = async (run: () => void | Promise<void>): Promise<void> => {
+      try {
+        await run()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    await step(() => this.deps.broker.cancelAll())
+    await step(() => this.deps.loop.drain())
+    await step(() => this.deps.consult.dispose())
+    await step(() => this.deps.sessions.dispose())
+    await step(() => this.deps.terminal.dispose())
+    if (errors.length) throw errors[0]
   }
 
   private enqueue<T>(task: () => Promise<T>): Promise<T> {

@@ -4,6 +4,7 @@ import { HostRegistry } from '../src/main/host/registry'
 import type { SshHost } from '../src/main/host/ssh'
 import { AgentFactory } from '../src/main/services/agents'
 import { GitService } from '../src/main/services/git'
+import { LoginShare } from '../src/main/services/login-share'
 import { OmpService } from '../src/main/services/omp'
 import { PlanService } from '../src/main/services/plan'
 import type { SettingsService } from '../src/main/services/settings'
@@ -17,6 +18,7 @@ import { join } from 'node:path'
 const hostId = process.env.PROHARNESS_SSH_HOST || ''
 const implementerModel = process.env.PROHARNESS_SSH_LOOP_IMPLEMENTER || 'commandcode/deepseek/deepseek-v4.1-flash'
 const reviewerModel = process.env.PROHARNESS_SSH_LOOP_REVIEWER || 'commandcode/claude-sonnet-5-5'
+const shareLogins = process.env.PROHARNESS_SSH_SHARE_LOGINS === '1'
 
 describe.skipIf(!hostId)('ssh loop live', () => {
   it('implements, reviews and commits on the remote host', async () => {
@@ -31,7 +33,17 @@ describe.skipIf(!hostId)('ssh loop live', () => {
     )
     const settings = { workspacePath: root } as unknown as SettingsService
     const local = mkdtempSync(join(tmpdir(), 'ph-ssh-loop-'))
-    const omp = new OmpService(() => '', () => root, join(local, 'omp-status.json'), () => host)
+    const localOmp = shareLogins
+      ? new OmpService(() => '', () => local, join(local, 'local-omp-status.json'), () => registry.local)
+      : null
+    const share = localOmp ? new LoginShare(() => localOmp.binary(registry.local), () => true) : null
+    const omp = new OmpService(
+      () => '',
+      () => root,
+      join(local, 'omp-status.json'),
+      () => host,
+      share ? (target) => share.prelude(target) : undefined
+    )
     const plan = new PlanService(() => host, () => root)
     const git = new GitService(() => host, () => root)
     const broker = new UiBroker()
@@ -71,6 +83,10 @@ describe.skipIf(!hostId)('ssh loop live', () => {
       expect(out.stdout).toContain('hello-world')
       expect(await host.readText(`${root}/goals/demo/PLAN.md`)).toContain('- [x] **1.1**')
     } finally {
+      if (share) {
+        await share.detach(host)
+        share.dispose()
+      }
       loop.dispose()
       await host.run(`rm -rf ${root}`)
       registry.dispose()

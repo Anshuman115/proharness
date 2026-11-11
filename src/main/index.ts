@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron'
 import { join } from 'node:path'
 import type { WorkspaceHost } from './host/host'
 import { HostRegistry } from './host/registry'
@@ -21,6 +21,8 @@ import { WorkspaceService } from './services/workspace'
 let mainWindow: BrowserWindow | null = null
 let cleanup: (() => Promise<void>) | null = null
 let windowHook: ((window: BrowserWindow) => void) | undefined
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -148,13 +150,22 @@ if (!gotLock) {
     void omp.refresh()
 
     cleanup = async (): Promise<void> => {
-      await workspace.restartAgents()
-      loop.dispose()
-      plan.dispose()
-      git.dispose()
-      loginShare.dispose()
-      registry.dispose()
+      try {
+        // The quit race expires after 5 s; leave time for the synchronous teardown below.
+        await Promise.race([workspace.restartAgents(), delay(3_500)])
+      } catch (error) {
+        console.error('Restart agents failed:', error)
+      } finally {
+        loop.dispose()
+        plan.dispose()
+        git.dispose()
+        loginShare.dispose()
+        registry.dispose()
+      }
     }
+  }).catch((error: Error) => {
+    dialog.showErrorBox('ProHarness could not start', error.message)
+    app.quit()
   })
 
   app.on('activate', () => {

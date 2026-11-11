@@ -387,31 +387,38 @@ describe('error policy', () => {
     expect(store().getState().toast?.message).toBe('cancel failed')
   })
 
-  it('clears login status and toasts once when the toggle fails', async () => {
+  it('resets tabs and toasts once when the toggle fails', async () => {
     const remote = settings({ workspaceHost: 'devbox', workspacePath: '/srv/a', workspaceName: 'a @ devbox' })
     api.bootstrap.mockResolvedValue(boot(remote))
     await store().getState().init()
+    expect(api.sessions.create).toHaveBeenCalledTimes(1)
     api.loginShare.set.mockRejectedValueOnce(new Error('login failed'))
     await store().getState().setLoginShare(true)
-    expect(store().getState().loginShare).toBeNull()
     expect(store().getState().loginShareBusy).toBe(false)
+    expect(store().getState().workspaceRevision).toBe(1)
+    expect(store().getState().tabs).toHaveLength(1)
+    expect(api.sessions.create).toHaveBeenCalledTimes(2)
     expect(store().getState().toast?.message).toBe('login failed')
   })
 
-  it('does not clear newer login status when a stale toggle fails', async () => {
+  it('resets after a toggle that overlaps a settings save', async () => {
     const remote = settings({ workspaceHost: 'devbox', workspacePath: '/srv/a', workspaceName: 'a @ devbox' })
     api.bootstrap.mockResolvedValue(boot(remote))
     const enabled: LoginShareStatus = { hostId: 'devbox', enabled: true, active: true, error: null }
     api.loginShare.status.mockResolvedValue(enabled)
     await store().getState().init()
+    expect(api.sessions.create).toHaveBeenCalledTimes(1)
     const pending = deferred<{ settings: PublicSettings; status: LoginShareStatus }>()
     api.loginShare.set.mockReturnValueOnce(pending.promise)
-    const toggling = store().getState().setLoginShare(false)
+    const toggling = store().getState().setLoginShare(true)
     api.settings.update.mockResolvedValueOnce(remote)
     await store().getState().updateSettings({})
-    pending.reject(new Error('late failure'))
+    pending.resolve({ settings: remote, status: enabled })
     await toggling
-    expect(store().getState().loginShare?.enabled).toBe(true)
-    expect(store().getState().loginShareBusy).toBe(false)
+    const state = store().getState()
+    expect(state.loginShare).toEqual(enabled)
+    expect(state.workspaceRevision).toBe(1)
+    expect(state.tabs).toHaveLength(1)
+    expect(api.sessions.create).toHaveBeenCalledTimes(2)
   })
 })

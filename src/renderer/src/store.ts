@@ -387,20 +387,21 @@ export const useAppStore = create<AppStore>((set, get) => {
       const settings = get().settings
       if (!settings || isLocalHost(settings.workspaceHost) || get().loginShareBusy) return
       const host = settings.workspaceHost
-      const seq = ++settingsSeq
+      const key = workspaceKey(settings)
       set({ loginShareBusy: true })
       try {
         const result = await window.proharness.loginShare.set(enabled)
-        if (seq === settingsSeq) {
-          set({ loginShare: result.status })
-          await get().applySettings(result.settings, { seq, forceReset: true })
-          get().pushToast('success', enabled ? `${host} now uses this Mac's logins.` : `${host} uses its own logins again.`)
-        }
+        if (workspaceKey(get().settings) !== key) return
+        set({ loginShare: result.status })
+        await get().applySettings(result.settings, { forceReset: true })
+        get().pushToast('success', enabled ? `${host} now uses this Mac's logins.` : `${host} uses its own logins again.`)
       } catch (error) {
-        if (seq === settingsSeq) {
-          set({ loginShare: null })
-          get().pushToast('error', (error as Error).message)
-        }
+        const current = get().settings
+        if (!current || workspaceKey(current) !== key) return
+        // Main drains every agent before the tunnel work, so the tabs must be recreated even when the toggle failed.
+        set({ loginShare: null })
+        await get().applySettings(current, { forceReset: true })
+        get().pushToast('error', (error as Error).message)
       } finally {
         set({ loginShareBusy: false })
       }
