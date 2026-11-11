@@ -6,6 +6,11 @@ It does not have its own agent. Every session, implementer, reviewer, and consul
 
 ![ProHarness running a session on DeepSeek V4.1 Flash](docs/proharness.png)
 
+## Product docs
+
+Read the [docs index](<docs/README.md>) for product rules, architecture, UI design, and development checks.
+Read the [agent instructions](<AGENTS.md>) before repository changes.
+
 ## What it adds on top of omp
 
 - **Tabs.** Each tab is a separate omp process. Switch model and reasoning effort per tab, queue follow-ups while it works (Return) or steer it (⌘Return), stop with Esc, compact, start fresh, or resume any omp session saved for the folder, including ones started in the terminal.
