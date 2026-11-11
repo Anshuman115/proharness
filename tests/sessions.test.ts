@@ -1,12 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import type { OmpAgent } from '../src/main/omp/agent'
+import type { AgentFactory } from '../src/main/services/agents'
 import { LocalHost } from '../src/main/host/local'
-import type { GitService } from '../src/main/services/git'
-import type { OmpSpawn } from '../src/main/omp/agent'
-import type { OmpService } from '../src/main/services/omp'
-import type { PlanService } from '../src/main/services/plan'
 import { SessionManager } from '../src/main/services/sessions'
 import type { SettingsService } from '../src/main/services/settings'
 import type { UiBroker } from '../src/main/services/ui-broker'
@@ -17,62 +12,76 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve }
 }
 
-function fakeSpawn(): OmpSpawn {
-  return () => Promise.reject(new Error('no spawn in this test'))
+function fakeAgent(): OmpAgent & { close: ReturnType<typeof vi.fn>; start: ReturnType<typeof vi.fn> } {
+  return {
+    close: vi.fn(async () => undefined),
+    start: vi.fn(async () => undefined),
+    switchSession: vi.fn(async () => undefined)
+  } as unknown as OmpAgent & { close: ReturnType<typeof vi.fn>; start: ReturnType<typeof vi.fn> }
 }
 
-function build(omp: Partial<OmpService>, dataDir: string): SessionManager {
-  const settings = {
-    chatApproval: 'write',
-    chatModel: '',
-    workspacePath: dataDir
-  } as unknown as SettingsService
+function build(chat: () => Promise<OmpAgent>): SessionManager {
+  const settings = { workspacePath: '' } as unknown as SettingsService
   return new SessionManager(
     settings,
-    omp as OmpService,
-    {} as PlanService,
-    {} as GitService,
-    {} as UiBroker,
-    dataDir,
+    { chat } as unknown as Pick<AgentFactory, 'chat'>,
+    { cancelOrigin: vi.fn() } as unknown as UiBroker,
     () => new LocalHost()
   )
 }
 
 describe('SessionManager pending creates', () => {
-  it('cancels a create waiting on the spawner when the tab is closed', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'ph-sessions-'))
-    const pendingSpawn = deferred<OmpSpawn>()
-    const spawner = vi.fn(() => pendingSpawn.promise)
-    const sessions = build({ spawner } as unknown as Partial<OmpService>, dataDir)
-    try {
-      const creating = sessions.create({ tabId: 'tab-1', title: 'New session' })
-      const expectation = expect(creating).rejects.toThrow(/cancelled/)
-      await sessions.close('tab-1')
-      pendingSpawn.resolve(fakeSpawn())
-      await expectation
-      expect(spawner).toHaveBeenCalledTimes(1)
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true })
-    }
+  it('cancels a create waiting on the agent factory when the tab is closed', async () => {
+    const pending = deferred<OmpAgent>()
+    const chat = vi.fn(() => pending.promise)
+    const sessions = build(chat)
+    const creating = sessions.create({ tabId: 'tab-1', title: 'New session' })
+    const expectation = expect(creating).rejects.toThrow(/cancelled/)
+    await sessions.close('tab-1')
+    const agent = fakeAgent()
+    pending.resolve(agent)
+    await expectation
+    expect(chat).toHaveBeenCalledTimes(1)
+    expect(agent.close).toHaveBeenCalledTimes(1)
   })
 
-  it('lets the latest pending create for a tab win', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'ph-sessions-'))
-    const firstSpawn = deferred<OmpSpawn>()
-    const secondSpawn = deferred<OmpSpawn>()
-    const spawner = vi.fn().mockImplementationOnce(() => firstSpawn.promise).mockImplementationOnce(() => secondSpawn.promise)
-    const sessions = build({ spawner } as unknown as Partial<OmpService>, dataDir)
-    try {
-      const first = sessions.create({ tabId: 'tab-2', title: 'First' })
-      const firstExpectation = expect(first).rejects.toThrow(/cancelled/)
-      const second = sessions.create({ tabId: 'tab-2', title: 'Second' })
-      firstSpawn.resolve(fakeSpawn())
-      await firstExpectation
-      secondSpawn.resolve(fakeSpawn())
-      await expect(second).rejects.toThrow(/no spawn/)
-      expect(spawner).toHaveBeenCalledTimes(2)
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true })
-    }
+  it('lets the latest pending create for a tab win and closes the unused agent', async () => {
+    const first = deferred<OmpAgent>()
+    const second = deferred<OmpAgent>()
+    const chat = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    const sessions = build(chat)
+    const firstCreate = sessions.create({ tabId: 'tab-2', title: 'First' })
+    const firstExpectation = expect(firstCreate).rejects.toThrow(/cancelled/)
+    const secondCreate = sessions.create({ tabId: 'tab-2', title: 'Second' })
+
+    const firstAgent = fakeAgent()
+    first.resolve(firstAgent)
+    await firstExpectation
+    expect(firstAgent.close).toHaveBeenCalledTimes(1)
+
+    const secondAgent = fakeAgent()
+    second.resolve(secondAgent)
+    await secondCreate
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(secondAgent.close).not.toHaveBeenCalled()
+
+    await sessions.close('tab-2')
+    expect(secondAgent.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes a created agent when the workspace changes during setup', async () => {
+    const pending = deferred<OmpAgent>()
+    const chat = vi.fn(() => pending.promise)
+    const sessions = build(chat)
+    const creating = sessions.create({ tabId: 'tab-3', title: 'New session' })
+    const expectation = expect(creating).rejects.toThrow(/workspace changed/)
+    await sessions.dispose()
+    const agent = fakeAgent()
+    pending.resolve(agent)
+    await expectation
+    expect(agent.close).toHaveBeenCalledTimes(1)
   })
 })

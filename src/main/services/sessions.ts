@@ -1,14 +1,10 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, posix } from 'node:path'
+import { join } from 'node:path'
 import { DEFAULT_SESSION_TITLE, titleFromText } from '@shared/defaults'
-import type { ApprovalMode, RecentSession, SessionCreateInput, SessionEvent, ThinkingLevel } from '@shared/types'
+import type { RecentSession, SessionCreateInput, SessionEvent, ThinkingLevel } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
-import { OmpAgent } from '../omp/agent'
-import type { GitService } from './git'
-import { createPlanTools, PLAN_SYSTEM_PROMPT, PLAN_TOOL_NAMES } from './host-tools'
-import type { OmpService } from './omp'
-import type { PlanService } from './plan'
+import type { OmpAgent } from '../omp/agent'
+import type { AgentFactory } from './agents'
 import type { SettingsService } from './settings'
 import type { UiBroker } from './ui-broker'
 
@@ -20,35 +16,6 @@ interface RuntimeSession {
 }
 
 const TAB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/
-
-function overlayYaml(): string {
-  return ['tools:', '  approval:', ...PLAN_TOOL_NAMES.map((name) => `    ${name}: allow`), ''].join('\n')
-}
-
-/** Writes the omp config overlay that lets host plan tools run without a prompt. */
-export function writeHostToolOverlay(dir: string): string {
-  mkdirSync(dir, { recursive: true })
-  const file = join(dir, 'omp-overlay.yml')
-  writeFileSync(file, overlayYaml(), 'utf8')
-  return file
-}
-
-const remoteOverlays = new Map<string, string>()
-
-/**
- * Returns the overlay path omp should read on `host`. SSH hosts get the same
- * YAML written to ~/.cache/proharness; the local path is reused as-is.
- */
-export async function ensureOverlay(host: WorkspaceHost, localPath: string): Promise<string> {
-  if (host.kind === 'local') return localPath
-  const cached = remoteOverlays.get(host.id)
-  if (cached) return cached
-  const home = await host.home()
-  const file = posix.join(home, '.cache', 'proharness', 'omp-overlay.yml')
-  await host.writeText(file, overlayYaml())
-  remoteOverlays.set(host.id, file)
-  return file
-}
 
 /**
  * omp stores sessions under ~/.omp/agent/sessions/<key>/. Paths inside the home
@@ -153,29 +120,18 @@ async function listRecentSessions(host: WorkspaceHost, cwd: string, limit = 25):
 export class SessionManager {
   private sessions = new Map<string, RuntimeSession>()
   private emit: (tabId: string, event: SessionEvent) => void = () => undefined
-  private readonly localOverlay: string
   private generation = 0
   private pending = new Map<string, { generation: number; cancelled: boolean }>()
 
   constructor(
     private readonly settings: SettingsService,
-    private readonly omp: OmpService,
-    private readonly plan: PlanService,
-    private readonly git: GitService,
+    private readonly agents: Pick<AgentFactory, 'chat'>,
     private readonly broker: UiBroker,
-    dataDir: string,
     private readonly host: () => WorkspaceHost
-  ) {
-    this.localOverlay = writeHostToolOverlay(dataDir)
-  }
+  ) {}
 
   setEmitter(emitter: (tabId: string, event: SessionEvent) => void): void {
     this.emit = emitter
-  }
-
-  /** The overlay path omp reads on `host`; written on first use for SSH hosts. */
-  overlayFor(host: WorkspaceHost): Promise<string> {
-    return ensureOverlay(host, this.localOverlay)
   }
 
   private get(tabId: string): RuntimeSession {
@@ -195,36 +151,29 @@ export class SessionManager {
     if (!TAB_ID_RE.test(input.tabId)) throw new Error('Invalid session id.')
     if (this.sessions.has(input.tabId)) return
     const tabId = input.tabId
-    const host = this.host()
     const previous = this.pending.get(tabId)
     if (previous) previous.cancelled = true
     const reservation = { generation: this.generation, cancelled: false }
     this.pending.set(tabId, reservation)
     try {
-      const spawn = await this.omp.spawner(host)
-      const overlay = await this.overlayFor(host)
-      if (reservation.cancelled) throw new Error('Session start was cancelled.')
-      if (reservation.generation !== this.generation) {
-        throw new Error('The workspace changed while the session was opening.')
-      }
-      if (this.sessions.has(tabId)) return
-      const approval: ApprovalMode = this.settings.chatApproval
-      const model = input.model?.trim() || this.settings.chatModel || undefined
-      const agent = new OmpAgent({
-        spawn,
-        model,
-        approval,
-        mode: 'rpc-ui',
-        ephemeral: false,
-        configOverlays: [overlay],
-        appendSystemPrompt: PLAN_SYSTEM_PROMPT,
-        hostTools: createPlanTools({ plan: this.plan, git: this.git, allowComplete: true }),
-        broker: this.broker,
-        origin: 'session',
-        originId: tabId,
+      const agent = await this.agents.chat({
+        tabId,
+        model: input.model,
         originLabel: () => this.sessions.get(tabId)?.title || 'Session',
         onEvent: (event) => this.emit(tabId, event)
       })
+      if (reservation.generation !== this.generation) {
+        await agent.close()
+        throw new Error('The workspace changed while the session was opening.')
+      }
+      if (reservation.cancelled) {
+        await agent.close()
+        throw new Error('Session start was cancelled.')
+      }
+      if (this.sessions.has(tabId)) {
+        await agent.close()
+        return
+      }
       const session: RuntimeSession = { tabId, title: input.title || DEFAULT_SESSION_TITLE, agent, starting: Promise.resolve() }
       session.starting = (async () => {
         await agent.start()

@@ -1,14 +1,19 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import type { ModelInfo, OmpStatus } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
 import type { OmpSpawn } from '../omp/agent'
 import { findOmp, ompVersion } from '../omp/env'
 import { OmpRpc } from '../omp/rpc'
+import { PLAN_TOOL_NAMES } from './host-tools'
 
 type Json = Record<string, unknown>
 
 const PROBE_ARGS = ['--mode', 'rpc', '--no-session', '--no-extensions', '--no-skills', '--tools', 'read']
+
+function overlayYaml(): string {
+  return ['tools:', '  approval:', ...PLAN_TOOL_NAMES.map((name) => `    ${name}: allow`), ''].join('\n')
+}
 
 function modelFromJson(raw: Json): ModelInfo | null {
   if (typeof raw.provider !== 'string' || typeof raw.id !== 'string') return null
@@ -27,6 +32,11 @@ function modelFromJson(raw: Json): ModelInfo | null {
   }
 }
 
+interface OmpTarget {
+  host: WorkspaceHost
+  cwd: string
+}
+
 /**
  * Locates omp, captures the login-shell environment, and caches the model
  * catalog omp reports for the user's configured providers. Every operation
@@ -35,8 +45,9 @@ function modelFromJson(raw: Json): ModelInfo | null {
 export class OmpService {
   private status: OmpStatus
   private refreshing: Promise<OmpStatus> | null = null
-  private refreshingHost: string | null = null
+  private refreshingKey: string | null = null
   private readonly binaries = new Map<string, { path: string; explicit: string }>()
+  private readonly overlays = new Map<string, Promise<string>>()
   private listeners = new Set<(status: OmpStatus) => void>()
 
   constructor(
@@ -109,6 +120,27 @@ export class OmpService {
     return path
   }
 
+  /** The overlay omp reads on `host`; written once per host per service instance. */
+  overlayFor(host: WorkspaceHost): Promise<string> {
+    const cached = this.overlays.get(host.id)
+    if (cached) return cached
+    const write = this.writeOverlay(host).catch((error) => {
+      this.overlays.delete(host.id)
+      throw error
+    })
+    this.overlays.set(host.id, write)
+    return write
+  }
+
+  private async writeOverlay(host: WorkspaceHost): Promise<string> {
+    const file =
+      host.kind === 'local'
+        ? join(dirname(this.cacheFile), 'omp-overlay.yml')
+        : posix.join(await host.home(), '.cache', 'proharness', 'omp-overlay.yml')
+    await host.writeText(file, overlayYaml())
+    return file
+  }
+
   /** Resolves the binary, then starts omp with `args` and a freshly attached prelude. */
   async spawner(host: WorkspaceHost = this.activeHost(), cwd: string = this.cwd()): Promise<OmpSpawn> {
     const path = await this.binary(host)
@@ -123,26 +155,30 @@ export class OmpService {
   }
 
   refresh(): Promise<OmpStatus> {
-    const hostId = this.activeHost().id
-    if (this.refreshing && this.refreshingHost === hostId) return this.refreshing
+    const target: OmpTarget = { host: this.activeHost(), cwd: this.cwd() }
+    const hostId = target.host.id
+    const targetKey = `${hostId}\u0000${target.cwd}`
+    if (this.refreshing && this.refreshingKey === targetKey) return this.refreshing
     const previous = this.refreshing
     const run = (previous ? previous.catch(() => this.status) : Promise.resolve(this.status))
-      .then(() => this.load())
-      .catch((error) =>
-        this.publish({ ...this.status, hostId, ok: false, error: (error as Error).message, checkedAt: Date.now() })
-      )
+      .then(() => this.load(target))
+      .catch((error) => {
+        const base =
+          this.status.hostId === hostId ? this.status : this.readCache(this.cachePath(hostId), hostId)
+        return this.publish({ ...base, hostId, ok: false, error: (error as Error).message, checkedAt: Date.now() })
+      })
     this.refreshing = run
-    this.refreshingHost = hostId
+    this.refreshingKey = targetKey
     void run.finally(() => {
       if (this.refreshing !== run) return
       this.refreshing = null
-      this.refreshingHost = null
+      this.refreshingKey = null
     })
     return run
   }
 
-  private async load(): Promise<OmpStatus> {
-    const host = this.activeHost()
+  private async load(target: OmpTarget): Promise<OmpStatus> {
+    const { host, cwd } = target
     const local = host.kind === 'local'
     const base: OmpStatus =
       this.status.hostId === host.id ? this.status : this.readCache(this.cachePath(host.id), host.id)
@@ -156,7 +192,16 @@ export class OmpService {
     }
     const version = await ompVersion(host, path)
     const displayPath = local ? path : `${host.id}:${path}`
-    const cwd = local && !existsSync(this.cwd()) ? process.cwd() : this.cwd()
+    if (!(await host.stat(cwd))?.isDirectory) {
+      return this.publish({
+        ...base,
+        ok: false,
+        path: displayPath,
+        version,
+        error: `Workspace folder "${cwd}" is missing or not a directory on ${host.id}. Choose another workspace in Settings.`,
+        checkedAt: Date.now()
+      })
+    }
     let rpc: OmpRpc | null = null
     try {
       const spawn = await this.spawner(host, cwd)

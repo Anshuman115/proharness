@@ -19,12 +19,36 @@ export class AgentFactory implements LoopAgentFactory {
     private readonly plan: PlanService,
     private readonly git: GitService,
     private readonly broker: UiBroker,
-    private readonly overlay: (host: WorkspaceHost) => Promise<string>,
     private readonly host: () => WorkspaceHost
   ) {}
 
   defaultModel(): string | null {
     return this.omp.current().defaultModel
+  }
+
+  async chat(options: {
+    tabId: string
+    model?: string
+    originLabel: () => string
+    onEvent: (event: SessionEvent) => void
+  }): Promise<OmpAgent> {
+    const host = this.host()
+    const spawn = await this.omp.spawner(host)
+    return new OmpAgent({
+      spawn,
+      model: options.model?.trim() || this.settings.chatModel || undefined,
+      approval: this.settings.chatApproval,
+      mode: 'rpc-ui',
+      ephemeral: false,
+      configOverlays: [await this.omp.overlayFor(host)],
+      appendSystemPrompt: PLAN_SYSTEM_PROMPT,
+      hostTools: createPlanTools({ plan: this.plan, git: this.git, allowComplete: true }),
+      broker: this.broker,
+      origin: 'session',
+      originId: options.tabId,
+      originLabel: options.originLabel,
+      onEvent: options.onEvent
+    })
   }
 
   async implementer(options: {
@@ -41,7 +65,7 @@ export class AgentFactory implements LoopAgentFactory {
       approval: options.approval,
       mode: 'rpc',
       ephemeral: false,
-      configOverlays: [await this.overlay(host)],
+      configOverlays: [await this.omp.overlayFor(host)],
       appendSystemPrompt: PLAN_SYSTEM_PROMPT,
       hostTools: createPlanTools({ plan: this.plan, git: this.git, allowComplete: false }),
       broker: this.broker,

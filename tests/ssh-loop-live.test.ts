@@ -9,7 +9,6 @@ import { PlanService } from '../src/main/services/plan'
 import type { SettingsService } from '../src/main/services/settings'
 import { TaskLoopService } from '../src/main/services/task-loop'
 import { UiBroker } from '../src/main/services/ui-broker'
-import { ensureOverlay, writeHostToolOverlay } from '../src/main/services/sessions'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,8 +34,7 @@ describe.skipIf(!hostId)('ssh loop live', () => {
     const git = new GitService(() => host, () => root)
     const broker = new UiBroker()
     broker.setEmitters((request) => broker.respond({ requestId: request.id, value: request.options[0] ?? '' }), () => undefined)
-    const overlay = writeHostToolOverlay(local)
-    const agents = new AgentFactory(settings, omp, plan, git, broker, (target) => ensureOverlay(target, overlay), () => host)
+    const agents = new AgentFactory(settings, omp, plan, git, broker, () => host)
     const loop = new TaskLoopService(plan, git, agents)
     const log: string[] = []
     loop.setEmitter((event) => {

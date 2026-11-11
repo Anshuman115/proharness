@@ -57,16 +57,8 @@ if (!gotLock) {
     const plan = new PlanService(activeHost, () => settings.workspacePath)
     const git = new GitService(activeHost, () => settings.workspacePath)
     const broker = new UiBroker()
-    const sessions = new SessionManager(settings, omp, plan, git, broker, dataDir, activeHost)
-    const agents = new AgentFactory(
-      settings,
-      omp,
-      plan,
-      git,
-      broker,
-      (host) => sessions.overlayFor(host),
-      activeHost
-    )
+    const agents = new AgentFactory(settings, omp, plan, git, broker, activeHost)
+    const sessions = new SessionManager(settings, agents, broker, activeHost)
     const consult = new ConsultService(agents, git)
     const terminal = new TerminalService(
       () => settings.workspacePath,

@@ -9,7 +9,6 @@ import { AgentFactory } from '../src/main/services/agents'
 import { GitService } from '../src/main/services/git'
 import { OmpService } from '../src/main/services/omp'
 import { PlanService } from '../src/main/services/plan'
-import { writeHostToolOverlay } from '../src/main/services/sessions'
 import type { SettingsService } from '../src/main/services/settings'
 import { TaskLoopService } from '../src/main/services/task-loop'
 import { UiBroker } from '../src/main/services/ui-broker'
@@ -42,10 +41,9 @@ describe.skipIf(!live)('loop live', () => {
 
     const settings = { workspacePath: root } as unknown as SettingsService
     const host = new LocalHost()
-    const omp = new OmpService(() => '', () => root, join(root, '.omp-status.json'), () => host)
+    const omp = new OmpService(() => '', () => root, join(root, '.ph', 'omp-status.json'), () => host)
     const plan = new PlanService(() => host, () => root)
     const gitService = new GitService(() => host, () => root)
-    const overlay = writeHostToolOverlay(join(root, '.ph'))
     git('config', 'core.excludesFile', '/dev/null')
     writeFileSync(join(root, '.git', 'info', 'exclude'), '/.ph/\n/.omp-status.json\n')
     const broker = new UiBroker()
@@ -53,7 +51,7 @@ describe.skipIf(!live)('loop live', () => {
       (request) => broker.respond({ requestId: request.id, value: request.options[0] ?? '' }),
       () => undefined
     )
-    const agents = new AgentFactory(settings, omp, plan, gitService, broker, async () => overlay, () => host)
+    const agents = new AgentFactory(settings, omp, plan, gitService, broker, () => host)
     const loop = new TaskLoopService(plan, gitService, agents)
     const log: string[] = []
     loop.setEmitter((event) => {
