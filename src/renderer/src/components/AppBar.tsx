@@ -1,4 +1,4 @@
-import { FolderOpen, PanelLeft, PanelRight, Settings } from 'lucide-react'
+import { FolderOpen, PanelLeft, PanelRight, Server, Settings } from 'lucide-react'
 import { useAppStore } from '../store'
 import { basename, stepLabel } from '../lib/format'
 
@@ -11,8 +11,9 @@ export function AppBar(): React.JSX.Element {
   const toggleRight = useAppStore((state) => state.toggleRight)
   const setWorkbenchTab = useAppStore((state) => state.setWorkbenchTab)
   const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
-  const chooseWorkspace = useAppStore((state) => state.chooseWorkspace)
+  const setWorkspaceOpen = useAppStore((state) => state.setWorkspaceOpen)
   const loopLive = ['running', 'paused', 'stopping'].includes(loop.status)
+  const remote = settings ? settings.workspaceHost !== 'local' : false
 
   return (
     <header className="appbar">
@@ -26,9 +27,20 @@ export function AppBar(): React.JSX.Element {
         >
           <PanelLeft size={15} />
         </button>
-        <button type="button" className="workspace-chip" onClick={() => void chooseWorkspace()} title={settings?.workspacePath}>
-          <FolderOpen size={13} />
-          <span>{settings ? basename(settings.workspacePath) : 'workspace'}</span>
+        <button
+          type="button"
+          className="workspace-chip"
+          onClick={() => setWorkspaceOpen(true)}
+          title={settings ? `${settings.workspaceHost}:${settings.workspacePath}` : undefined}
+        >
+          {remote ? <Server size={13} /> : <FolderOpen size={13} />}
+          <span>
+            {settings
+              ? remote
+                ? `${basename(settings.workspacePath)} @ ${settings.workspaceHost}`
+                : basename(settings.workspacePath)
+              : 'workspace'}
+          </span>
         </button>
       </div>
 

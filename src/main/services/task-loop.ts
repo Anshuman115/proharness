@@ -283,6 +283,7 @@ export class TaskLoopService {
       'Implement this task and only this task. Keep the change set tightly scoped.',
       'Run the most relevant checks you can (typecheck, tests, build) and fix failures you introduce.',
       'Do not commit, do not edit goals/, and do not start the next task. The loop commits, reviews and checks off.',
+      'Every file left in the working tree gets committed. Delete build outputs and caches you created (for example __pycache__, dist, coverage) unless .gitignore already covers them.',
       'If a step is impossible or needs a secret, say so plainly in your final answer instead of faking it.',
       'Finish with a short summary of what changed and how you verified it.'
     ].join('\n')

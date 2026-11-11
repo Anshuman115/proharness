@@ -15,6 +15,20 @@ It does not have its own agent. Every session, implementer, reviewer, and consul
 - **Consult.** Ask any model a read-only question about the repo, optionally with the current diff attached.
 - **Workbench.** Git changes with per-file diffs and restore, a real PTY shell, and the loop's live output.
 
+### Remote workspaces over SSH
+
+Click the workspace chip (or ⌘K → Change workspace), pick a host from `~/.ssh/config`, browse to a repo and open it. omp, git, the plan, the loop and the shell then all run on that machine, so it behaves like a local folder. Nothing is mounted: each operation goes over one multiplexed OpenSSH connection (`ControlPersist`), so a git status takes about 150 ms.
+
+The remote host needs `git` and `omp` (`curl -fsSL https://omp.sh/install | sh`). Logins come from omp on that machine: run `omp` there and `/login`, or point a provider at a key file in `~/.omp/agent/models.yml`:
+
+```yaml
+providers:
+  commandcode:
+    apiKey: "!cat /home/ubuntu/.omp/agent/secrets/commandcode.key"
+```
+
+Model choices must exist on the remote omp. On a host with only Command Code, review with `commandcode/claude-sonnet-5-5`. Key or agent authentication is required; ProHarness never prompts for SSH passwords.
+
 ### goals/ never reaches git
 
 The first time you create a goal or start the loop, ProHarness adds `/goals/` to `.git/info/exclude`. This is a local ignore: it leaves your shared `.gitignore` untouched. The Changes panel, review diffs and loop commits all leave `goals/` out, and the loop checks tasks off without committing the plan. If `goals/` was already tracked, run `git rm -r --cached goals` once.
@@ -32,6 +46,7 @@ pnpm install
 pnpm dev          # Electron with hot reload
 pnpm test         # unit + loop tests (no network)
 pnpm test:live    # a real omp turn and a real one-task loop (DeepSeek V4.1 Flash builds, Claude Sonnet 5.5 reviews)
+PROHARNESS_SSH_HOST=devbox npx vitest run tests/ssh-live.test.ts tests/ssh-loop-live.test.ts   # the same on an SSH host
 pnpm dist:mac     # release/ProHarness-<version>-arm64.dmg and -mac.zip
 ```
 
@@ -87,6 +102,7 @@ src/main/omp/rpc.ts         JSONL transport: request/response ids, protocol v2 c
 src/main/omp/agent.ts       one omp process: events → SessionEvent, dialogs, host tools, runTurn()
 src/main/omp/translate.ts   pure mapping from omp payloads to view models
 src/main/omp/env.ts         login-shell env (GUI apps get launchd's PATH) and omp discovery
+src/main/host/              WorkspaceHost: LocalHost and SshHost (fs, exec, spawn over one control socket)
 src/main/services/          sessions, task loop, review parsing, plan, git, consult, settings, terminal
 src/renderer/               React + Zustand UI
 ```

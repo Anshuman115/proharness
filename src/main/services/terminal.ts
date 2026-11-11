@@ -10,7 +10,7 @@ import type {
   TerminalExitEvent
 } from '@shared/types'
 import type { WorkspaceHost } from '../host/host'
-import type { SshHost } from '../host/ssh'
+import { sshClientEnv, type SshHost } from '../host/ssh'
 
 const require = createRequire(__filename)
 
@@ -93,8 +93,9 @@ export class TerminalService {
     const pipeArgs = remote ? ptyArgs : ['-i']
     // A remote cwd does not exist on this Mac; ssh starts from the local cwd.
     const localCwd = remote ? process.cwd() : requested
+    const base = this.baseEnv()
     const env = {
-      ...this.baseEnv(),
+      ...(remote ? sshClientEnv(base) : base),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       PROHARNESS_TERMINAL: '1'

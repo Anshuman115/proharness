@@ -20,7 +20,8 @@ import type {
   SettingsPatch,
   SlashCommand,
   ThinkingLevel,
-  UiRequest
+  UiRequest,
+  WorkspaceRef
 } from '@shared/types'
 
 export interface ChatMessage {
@@ -182,6 +183,7 @@ export interface AppStore {
   consults: ConsultState[]
   loop: LoopState
   settingsOpen: boolean
+  workspaceOpen: boolean
   toast: Toast | null
 
   init: () => Promise<void>
@@ -220,6 +222,8 @@ export interface AppStore {
   setPaletteOpen: (open: boolean) => void
   updateSettings: (patch: SettingsPatch) => Promise<void>
   chooseWorkspace: () => Promise<void>
+  setWorkspaceOpen: (open: boolean) => void
+  openWorkspace: (ref: WorkspaceRef) => Promise<void>
   setSettingsOpen: (open: boolean) => void
   pushToast: (kind: Toast['kind'], message: string) => void
   clearToast: () => void
@@ -277,6 +281,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     consults: [],
     loop: blankLoop(),
     settingsOpen: false,
+    workspaceOpen: false,
     toast: null,
 
     init: async () => {
@@ -650,6 +655,19 @@ export const useAppStore = create<AppStore>((set, get) => {
         await resetWorkspaceState()
       } catch (error) {
         get().pushToast('error', (error as Error).message)
+      }
+    },
+
+    setWorkspaceOpen: (open) => set({ workspaceOpen: open }),
+
+    openWorkspace: async (ref) => {
+      try {
+        const next = await window.proharness.workspace.open(ref)
+        set({ settings: next, workspaceOpen: false })
+        await resetWorkspaceState()
+      } catch (error) {
+        get().pushToast('error', (error as Error).message)
+        throw error
       }
     },
 

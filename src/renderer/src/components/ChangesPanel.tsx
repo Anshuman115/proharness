@@ -31,6 +31,7 @@ export function ChangesPanel(): React.JSX.Element {
   const loadDiff = useAppStore((state) => state.loadDiff)
   const restoreDiff = useAppStore((state) => state.restoreDiff)
   const refreshGit = useAppStore((state) => state.refreshGit)
+  const remote = useAppStore((state) => Boolean(state.settings && state.settings.workspaceHost !== 'local'))
   const [confirmRestore, setConfirmRestore] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -147,14 +148,16 @@ export function ChangesPanel(): React.JSX.Element {
                     >
                       <Copy size={13} />
                     </button>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      title="Reveal in folder"
-                      onClick={() => void window.proharness.shell.showItem(diffPath)}
-                    >
-                      <ExternalLink size={13} />
-                    </button>
+                    {remote ? null : (
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title="Reveal in folder"
+                        onClick={() => void window.proharness.shell.showItem(diffPath)}
+                      >
+                        <ExternalLink size={13} />
+                      </button>
+                    )}
                     {selected && !['untracked', 'added', 'renamed', 'copied'].includes(selected.status) ? (
                       <button
                         type="button"

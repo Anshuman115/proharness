@@ -10,6 +10,7 @@ import { RequestDialog } from './components/RequestDialog'
 import { GoalDesignDialog } from './components/GoalDesignDialog'
 import { NewGoalDialog } from './components/NewGoalDialog'
 import { SettingsDialog } from './components/SettingsDialog'
+import { WorkspaceDialog } from './components/WorkspaceDialog'
 import { CommandPalette } from './components/CommandPalette'
 import { Toast } from './components/Toast'
 
@@ -128,6 +129,7 @@ export default function App(): React.JSX.Element {
       <GoalDesignDialog />
       <NewGoalDialog />
       <SettingsDialog />
+      <WorkspaceDialog />
       <CommandPalette />
       <Toast />
     </div>

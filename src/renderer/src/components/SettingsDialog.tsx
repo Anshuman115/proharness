@@ -10,7 +10,7 @@ export function SettingsDialog(): React.JSX.Element | null {
   const settings = useAppStore((state) => state.settings)
   const omp = useAppStore((state) => state.omp)
   const updateSettings = useAppStore((state) => state.updateSettings)
-  const chooseWorkspace = useAppStore((state) => state.chooseWorkspace)
+  const setWorkspaceOpen = useAppStore((state) => state.setWorkspaceOpen)
   const refreshOmp = useAppStore((state) => state.refreshOmp)
   const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
   const appVersion = useAppStore((state) => state.appVersion)
@@ -207,8 +207,19 @@ export function SettingsDialog(): React.JSX.Element | null {
               <div className="field">
                 <label>Project folder</label>
                 <div className="input-with-action">
-                  <input value={settings.workspacePath} readOnly spellCheck={false} />
-                  <button type="button" className="btn btn--quiet btn--sm" onClick={() => void chooseWorkspace()}>
+                  <input
+                    value={settings.workspaceHost === 'local' ? settings.workspacePath : `${settings.workspaceHost}:${settings.workspacePath}`}
+                    readOnly
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--quiet btn--sm"
+                    onClick={() => {
+                      setSettingsOpen(false)
+                      setWorkspaceOpen(true)
+                    }}
+                  >
                     <FolderOpen size={13} /> Change
                   </button>
                 </div>

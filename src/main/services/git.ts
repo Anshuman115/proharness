@@ -13,6 +13,8 @@ const MAX_REVIEW_DIFF_CHARS = 180_000
 /** Local planning state; never shown as a change and never committed. */
 const PLAN_DIR = 'goals'
 const PLAN_EXCLUDE = `:(exclude)${PLAN_DIR}`
+/** git's well-known empty tree; diffs against it before the first commit. */
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
 function statusFromPorcelain(x: string, y: string): GitChangeStatus {
   if (x === '?' || y === '?') return 'untracked'
@@ -54,6 +56,12 @@ export class GitService {
     })
     if (allowCodes.includes(result.code)) return result
     throw new Error((result.stderr || 'git command failed').trim())
+  }
+
+  /** HEAD, or the empty tree in a repository without commits. */
+  private async base(): Promise<string> {
+    const result = await this.git(['rev-parse', '--verify', '--quiet', 'HEAD'], [0, 1, 128])
+    return result.code === 0 ? 'HEAD' : EMPTY_TREE
   }
 
   private async root(): Promise<string | null> {
@@ -111,7 +119,7 @@ export class GitService {
     }
 
     try {
-      const numstat = await this.git(['diff', 'HEAD', '--numstat', '--', '.', PLAN_EXCLUDE], [0, 128])
+      const numstat = await this.git(['diff', await this.base(), '--numstat', '--', '.', PLAN_EXCLUDE], [0, 128])
       const byPath = new Map<string, { additions: number; deletions: number }>()
       for (const line of numstat.stdout.split(/\r?\n/)) {
         const parts = line.split('\t')
@@ -178,7 +186,7 @@ export class GitService {
     const untracked = status.stdout.startsWith('??')
     let diff = ''
     if (!untracked) {
-      const result = await this.git(['diff', 'HEAD', '--no-ext-diff', '--unified=5', '--', path], [0, 1])
+      const result = await this.git(['diff', await this.base(), '--no-ext-diff', '--unified=5', '--', path], [0, 1])
       diff = result.stdout
     }
 

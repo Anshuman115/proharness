@@ -1,4 +1,4 @@
-import { AlertTriangle, CircleCheck, GitBranch, Terminal } from 'lucide-react'
+import { AlertTriangle, CircleCheck, GitBranch, Server, Terminal } from 'lucide-react'
 import { useAppStore } from '../store'
 import { formatCost, shortModel } from '../lib/format'
 
@@ -7,6 +7,7 @@ export function StatusBar(): React.JSX.Element {
   const omp = useAppStore((state) => state.omp)
   const tabs = useAppStore((state) => state.tabs)
   const requests = useAppStore((state) => state.requests)
+  const workspaceHost = useAppStore((state) => state.settings?.workspaceHost || 'local')
   const setWorkbenchTab = useAppStore((state) => state.setWorkbenchTab)
   const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
   const working = tabs.filter((tab) => tab.status === 'working').length
@@ -15,6 +16,12 @@ export function StatusBar(): React.JSX.Element {
   return (
     <footer className="statusbar">
       <div className="statusbar__group">
+        {workspaceHost !== 'local' ? (
+          <span className="statusbar__item" title={workspaceHost}>
+            <Server size={12} />
+            <span className="mono">{workspaceHost}</span>
+          </span>
+        ) : null}
         <button type="button" className="statusbar__item" onClick={() => setWorkbenchTab('changes')}>
           <GitBranch size={12} />
           <span>{git?.branch || (git?.isRepo ? 'detached' : 'no git')}</span>

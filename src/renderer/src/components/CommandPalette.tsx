@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import { useAppStore } from '../store'
+import { basename } from '../lib/format'
 
 interface Action {
   id: string
@@ -17,6 +18,7 @@ export function CommandPalette(): React.JSX.Element | null {
   const goals = useAppStore((state) => state.goals)
   const omp = useAppStore((state) => state.omp)
   const pinned = useAppStore((state) => state.settings?.pinnedModels || [])
+  const recentWorkspaces = useAppStore((state) => state.settings?.recentWorkspaces || [])
   const activeTabId = useAppStore((state) => state.activeTabId)
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
@@ -33,7 +35,7 @@ export function CommandPalette(): React.JSX.Element | null {
       { id: 'consult', label: 'Ask another model', run: () => store().setWorkbenchTab('consult') },
       { id: 'changes', label: 'Review changes', run: () => store().setWorkbenchTab('changes') },
       { id: 'shell', label: 'Open shell', hint: '⌘J', run: () => store().setWorkbenchTab('terminal') },
-      { id: 'workspace', label: 'Change workspace…', run: () => void store().chooseWorkspace() },
+      { id: 'workspace', label: 'Change workspace…', run: () => store().setWorkspaceOpen(true) },
       { id: 'settings', label: 'Settings', hint: '⌘,', run: () => store().setSettingsOpen(true) },
       { id: 'refresh-omp', label: 'Recheck omp and reload models', run: () => void store().refreshOmp() }
     ]
@@ -51,8 +53,16 @@ export function CommandPalette(): React.JSX.Element | null {
     }
     tabs.forEach((tab, index) => list.push({ id: `tab-${tab.id}`, label: `Go to tab: ${tab.title}`, hint: index < 7 ? `⌘${index + 3}` : undefined, run: () => store().setActiveTab(tab.id) }))
     for (const goal of goals) list.push({ id: `goal-${goal.id}`, label: `Goal: ${goal.title}`, hint: `${goal.progress}%`, run: () => void store().selectGoal(goal.id) })
+    for (const item of recentWorkspaces) {
+      list.push({
+        id: `workspace-${item.host}-${item.path}`,
+        label: `Open workspace: ${basename(item.path)} ${item.host === 'local' ? '(This Mac)' : `@ ${item.host}`}`,
+        hint: item.host === 'local' ? undefined : item.path,
+        run: () => void store().openWorkspace(item)
+      })
+    }
     return list
-  }, [tabs, goals, omp, pinned, activeTabId])
+  }, [tabs, goals, omp, pinned, activeTabId, recentWorkspaces])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()

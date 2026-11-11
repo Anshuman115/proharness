@@ -4,6 +4,19 @@ import { homedir } from 'node:os'
 import { join, posix } from 'node:path'
 import { collect, shellLine, shq, spawnPiped, type DirEntry, type ExecOptions, type ExecResult, type SpawnSpec, type StatInfo, type WorkspaceHost } from './host'
 
+/**
+ * Env for the local ssh client. macOS ssh forwards LANG/LC_* (SendEnv), and
+ * servers without that locale print setlocale warnings, so drop them.
+ */
+export function sshClientEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (key === 'LANG' || key === 'LANGUAGE' || key.startsWith('LC_')) continue
+    next[key] = value
+  }
+  return next
+}
+
 /** One multiplexed OpenSSH connection reused for every operation on a host. */
 export class SshHost implements WorkspaceHost {
   readonly kind = 'ssh' as const
@@ -56,9 +69,7 @@ export class SshHost implements WorkspaceHost {
   }
 
   private async local(): Promise<NodeJS.ProcessEnv> {
-    const env = await this.localEnv()
-    // The client's locale is forwarded by SendEnv on macOS; the remote may not have it.
-    return { ...env, LC_ALL: 'C', LANG: 'C' }
+    return sshClientEnv(await this.localEnv())
   }
 
   async env(): Promise<NodeJS.ProcessEnv> {
@@ -150,7 +161,7 @@ export class SshHost implements WorkspaceHost {
     const ttyFlags = spec.tty ? ['-tt'] : ['-T']
     // ssh needs the env synchronously here; fall back to the parent env.
     return spawnPiped('ssh', [...this.sshArgs(ttyFlags), this.remoteScript(spec.tty ? line : `exec ${line}`, spec.cwd, spec.env)], {
-      env: { ...process.env, ...this.cachedLocal, LC_ALL: 'C', LANG: 'C' }
+      env: sshClientEnv({ ...process.env, ...this.cachedLocal })
     })
   }
 

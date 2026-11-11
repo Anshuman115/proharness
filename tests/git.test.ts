@@ -74,3 +74,20 @@ describe('GitService untracked files', () => {
     expect(review.diff).toContain('+c')
   })
 })
+
+describe('GitService before the first commit', () => {
+  it('diffs staged files against the empty tree', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'proharness-git-empty-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: fresh })
+      writeFileSync(join(fresh, 'a.txt'), 'one\ntwo\n')
+      execFileSync('git', ['add', 'a.txt'], { cwd: fresh })
+      const empty = new GitService(() => new LocalHost(), () => fresh)
+      const summary = await empty.summary()
+      expect(summary.files[0]).toMatchObject({ path: 'a.txt', additions: 2 })
+      expect((await empty.fileDiff('a.txt')).diff).toContain('+two')
+    } finally {
+      rmSync(fresh, { recursive: true, force: true })
+    }
+  })
+})
