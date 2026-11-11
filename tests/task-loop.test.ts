@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { LoopConfig, LoopState, SessionEvent } from '../src/shared/types'
 import type { TurnResult } from '../src/main/omp/agent'
+import { LocalHost } from '../src/main/host/local'
 import { GitService } from '../src/main/services/git'
 import { PlanService } from '../src/main/services/plan'
 import { TaskLoopService, type LoopAgent, type LoopAgentFactory } from '../src/main/services/task-loop'
@@ -99,7 +100,8 @@ afterEach(() => {
 })
 
 function build(factory: FakeFactory): TaskLoopService {
-  return new TaskLoopService(new PlanService(() => root), new GitService(() => root), factory)
+  const host = new LocalHost()
+  return new TaskLoopService(new PlanService(() => host, () => root), new GitService(() => host, () => root), factory)
 }
 
 describe('TaskLoopService', () => {

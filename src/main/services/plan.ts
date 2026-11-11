@@ -1,21 +1,11 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  watch,
-  writeFileSync,
-  type FSWatcher
-} from 'node:fs'
-import { basename, join, resolve, sep } from 'node:path'
+import { basename } from 'node:path'
 import type {
   GoalDetail,
   GoalSummary,
   PlanPhase,
   TaskRef
 } from '@shared/types'
+import type { WorkspaceHost } from '../host/host'
 
 interface Frontmatter {
   data: Record<string, string>
@@ -214,23 +204,27 @@ function summarizeGoal(
 }
 
 export class PlanService {
-  private watcher: FSWatcher | null = null
+  private poller: NodeJS.Timeout | null = null
+  private polling = false
+  private signature = ''
   private debounce: NodeJS.Timeout | null = null
   private listeners = new Set<(goals: GoalSummary[]) => void>()
 
   constructor(
+    private readonly host: () => WorkspaceHost,
     private readonly workspace: () => string
   ) {}
 
   get goalsRoot(): string {
-    return join(this.workspace(), 'goals')
+    return this.host().path.join(this.workspace(), 'goals')
   }
 
-  ensureRoot(): void {
-    mkdirSync(this.goalsRoot, { recursive: true })
-    const readme = join(this.goalsRoot, 'README.md')
-    if (!existsSync(readme)) {
-      writeFileSync(
+  async ensureRoot(): Promise<void> {
+    const host = this.host()
+    await host.mkdirp(this.goalsRoot)
+    const readme = host.path.join(this.goalsRoot, 'README.md')
+    if (!(await host.stat(readme))) {
+      await host.writeText(
         readme,
         [
           '# Goals',
@@ -252,14 +246,13 @@ export class PlanService {
           '- [ ] **1.2** Build the second thing',
           '```',
           ''
-        ].join('\n'),
-        'utf8'
+        ].join('\n')
       )
     }
   }
 
   /** Scaffolds goals/<slug>/ with a DESIGN.md and an empty phase in PLAN.md. */
-  createGoal(title: string): GoalSummary {
+  async createGoal(title: string): Promise<GoalSummary> {
     const clean = title.replace(/\s+/g, ' ').trim()
     if (!clean) throw new Error('Give the goal a title.')
     const base =
@@ -268,13 +261,14 @@ export class PlanService {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 60) || 'goal'
-    this.ensureRoot()
+    const host = this.host()
+    await this.ensureRoot()
     let id = base
-    for (let n = 2; existsSync(join(this.goalsRoot, id)); n += 1) id = `${base}-${n}`
-    const dir = join(this.goalsRoot, id)
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(
-      join(dir, 'DESIGN.md'),
+    for (let n = 2; await host.stat(host.path.join(this.goalsRoot, id)); n += 1) id = `${base}-${n}`
+    const dir = host.path.join(this.goalsRoot, id)
+    await host.mkdirp(dir)
+    await host.writeText(
+      host.path.join(dir, 'DESIGN.md'),
       [
         '---',
         'status: draft',
@@ -292,56 +286,55 @@ export class PlanService {
         '',
         'Key decisions, interfaces, and risks.',
         ''
-      ].join('\n'),
-      'utf8'
+      ].join('\n')
     )
-    writeFileSync(
-      join(dir, 'PLAN.md'),
-      [`# ${clean} — plan`, '', '## Phase 1 — Foundation', '', '- [ ] **1.1** First task', ''].join('\n'),
-      'utf8'
+    await host.writeText(
+      host.path.join(dir, 'PLAN.md'),
+      [`# ${clean} — plan`, '', '## Phase 1 — Foundation', '', '- [ ] **1.1** First task', ''].join('\n')
     )
     this.resetWatching()
     this.emitChanged()
-    const summary = this.listGoals().find((goal) => goal.id === id)
+    const summary = (await this.listGoals()).find((goal) => goal.id === id)
     if (!summary) throw new Error('The goal was created but could not be read back.')
     return summary
   }
 
-  ensureGoal(goalId: string): string {
+  async ensureGoal(goalId: string): Promise<string> {
     if (!GOAL_ID_RE.test(goalId)) throw new Error('Invalid goal id.')
-    const dir = resolve(this.goalsRoot, goalId)
-    if (!dir.startsWith(resolve(this.goalsRoot) + sep)) throw new Error('Invalid goal path.')
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    const host = this.host()
+    const dir = host.path.resolve(this.goalsRoot, goalId)
+    if (!dir.startsWith(host.path.resolve(this.goalsRoot) + host.path.sep)) throw new Error('Invalid goal path.')
+    const info = await host.stat(dir)
+    if (!info || !info.isDirectory) {
       throw new Error(`Goal "${goalId}" was not found under goals/.`)
     }
     return dir
   }
 
-  listGoals(): GoalSummary[] {
-    if (!existsSync(this.goalsRoot)) return []
+  async listGoals(): Promise<GoalSummary[]> {
+    const host = this.host()
     let entries
     try {
-      entries = readdirSync(this.goalsRoot, { withFileTypes: true })
+      entries = await host.readdir(this.goalsRoot)
     } catch {
       return []
     }
 
     const goals: GoalSummary[] = []
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      if (!entry.isDirectory || entry.name.startsWith('.')) continue
       const id = entry.name
       if (!GOAL_ID_RE.test(id)) continue
-      const dir = join(this.goalsRoot, id)
-      const designPath = join(dir, 'DESIGN.md')
-      const planPath = join(dir, 'PLAN.md')
-      if (!existsSync(designPath)) continue
+      const dir = host.path.join(this.goalsRoot, id)
+      const designPath = host.path.join(dir, 'DESIGN.md')
+      const planPath = host.path.join(dir, 'PLAN.md')
+      const designInfo = await host.stat(designPath)
+      if (!designInfo) continue
       try {
-        const design = readFileSync(designPath, 'utf8')
-        const plan = existsSync(planPath) ? readFileSync(planPath, 'utf8') : ''
-        const updatedAt = Math.max(
-          statSync(designPath).mtimeMs,
-          existsSync(planPath) ? statSync(planPath).mtimeMs : 0
-        )
+        const design = await host.readText(designPath)
+        const planInfo = await host.stat(planPath)
+        const plan = planInfo ? await host.readText(planPath) : ''
+        const updatedAt = Math.max(designInfo.mtimeMs, planInfo?.mtimeMs ?? 0)
         goals.push(summarizeGoal(id, design, plan, designPath, planPath, updatedAt))
       } catch {
         // A malformed goal should not hide the rest of the plan.
@@ -350,13 +343,16 @@ export class PlanService {
     return goals.sort((a, b) => a.title.localeCompare(b.title))
   }
 
-  readGoal(goalId: string): GoalDetail {
-    const dir = this.ensureGoal(goalId)
-    const designPath = join(dir, 'DESIGN.md')
-    const planPath = join(dir, 'PLAN.md')
-    if (!existsSync(designPath)) throw new Error(`Goal "${goalId}" has no DESIGN.md.`)
-    const design = readFileSync(designPath, 'utf8')
-    const plan = existsSync(planPath) ? readFileSync(planPath, 'utf8') : ''
+  async readGoal(goalId: string): Promise<GoalDetail> {
+    const host = this.host()
+    const dir = await this.ensureGoal(goalId)
+    const designPath = host.path.join(dir, 'DESIGN.md')
+    const planPath = host.path.join(dir, 'PLAN.md')
+    const designInfo = await host.stat(designPath)
+    if (!designInfo) throw new Error(`Goal "${goalId}" has no DESIGN.md.`)
+    const design = await host.readText(designPath)
+    const planInfo = await host.stat(planPath)
+    const plan = planInfo ? await host.readText(planPath) : ''
     const phases = parsePhases(plan)
     const summary = summarizeGoal(
       goalId,
@@ -364,13 +360,13 @@ export class PlanService {
       plan,
       designPath,
       planPath,
-      Math.max(statSync(designPath).mtimeMs, existsSync(planPath) ? statSync(planPath).mtimeMs : 0)
+      Math.max(designInfo.mtimeMs, planInfo?.mtimeMs ?? 0)
     )
     return { ...summary, design, plan, phases }
   }
 
-  nextTask(goalId: string): TaskRef | null {
-    const detail = this.readGoal(goalId)
+  async nextTask(goalId: string): Promise<TaskRef | null> {
+    const detail = await this.readGoal(goalId)
     for (const phase of detail.phases) {
       const task = phase.tasks.find((candidate) => !candidate.checked)
       if (task) {
@@ -385,17 +381,15 @@ export class PlanService {
     return null
   }
 
-  private writePlan(goalId: string, content: string): void {
-    const dir = this.ensureGoal(goalId)
-    const target = join(dir, 'PLAN.md')
-    const tmp = `${target}.tmp`
-    writeFileSync(tmp, content, 'utf8')
-    renameSync(tmp, target)
+  private async writePlan(goalId: string, content: string): Promise<void> {
+    const dir = await this.ensureGoal(goalId)
+    const target = this.host().path.join(dir, 'PLAN.md')
+    await this.host().writeText(target, content)
     this.emitChanged()
   }
 
-  setTaskChecked(goalId: string, taskId: string, checked: boolean, note?: string): GoalDetail {
-    const detail = this.readGoal(goalId)
+  async setTaskChecked(goalId: string, taskId: string, checked: boolean, note?: string): Promise<GoalDetail> {
+    const detail = await this.readGoal(goalId)
     const task = detail.phases.flatMap((phase) => phase.tasks).find((item) => item.id === taskId)
     if (!task) throw new Error(`Task "${taskId}" was not found in ${goalId}.`)
     const eol = detail.plan.includes('\r\n') ? '\r\n' : '\n'
@@ -408,13 +402,13 @@ export class PlanService {
       const next = lines[task.line]
       if (next !== completion) lines.splice(task.line, 0, completion)
     }
-    this.writePlan(goalId, lines.join(eol))
+    await this.writePlan(goalId, lines.join(eol))
     return this.readGoal(goalId)
   }
 
-  addTaskNote(goalId: string, taskId: string, note: string): GoalDetail {
+  async addTaskNote(goalId: string, taskId: string, note: string): Promise<GoalDetail> {
     if (!note.trim()) throw new Error('A note is required.')
-    const detail = this.readGoal(goalId)
+    const detail = await this.readGoal(goalId)
     const task = detail.phases.flatMap((phase) => phase.tasks).find((item) => item.id === taskId)
     if (!task) throw new Error(`Task "${taskId}" was not found in ${goalId}.`)
     const eol = detail.plan.includes('\r\n') ? '\r\n' : '\n'
@@ -429,7 +423,7 @@ export class PlanService {
       insertAt += 1
     }
     lines.splice(insertAt, 0, entry)
-    this.writePlan(goalId, lines.join(eol))
+    await this.writePlan(goalId, lines.join(eol))
     return this.readGoal(goalId)
   }
 
@@ -442,35 +436,70 @@ export class PlanService {
   private emitChanged(): void {
     if (this.debounce) clearTimeout(this.debounce)
     this.debounce = setTimeout(() => {
-      const goals = this.listGoals()
-      for (const listener of this.listeners) listener(goals)
+      void (async () => {
+        try {
+          const goals = await this.listGoals()
+          this.signature = this.signatureOf(goals)
+          for (const listener of this.listeners) listener(goals)
+        } catch {
+          // Transient read errors are retried by the poller.
+        }
+      })()
     }, 120)
   }
 
+  private signatureOf(goals: GoalSummary[]): string {
+    return JSON.stringify(goals.map((goal) => [goal.id, goal.updatedAt, goal.openCount]))
+  }
+
   private startWatching(): void {
-    if (this.watcher) return
-    if (!existsSync(this.goalsRoot)) return
+    if (this.poller) return
+    void this.seedSignature()
+    const interval = this.host().kind === 'ssh' ? 4_000 : 2_000
+    this.poller = setInterval(() => void this.poll(), interval)
+    this.poller.unref()
+  }
+
+  private async seedSignature(): Promise<void> {
     try {
-      this.watcher = watch(this.goalsRoot, { recursive: true }, () => this.emitChanged())
+      this.signature = this.signatureOf(await this.listGoals())
     } catch {
-      // Some filesystems do not support recursive watches. Mutations still
-      // notify listeners directly.
-      this.watcher = null
+      // Keep the previous signature.
     }
   }
 
+  private async poll(): Promise<void> {
+    if (this.polling) return
+    this.polling = true
+    try {
+      const goals = await this.listGoals()
+      const signature = this.signatureOf(goals)
+      if (signature === this.signature) return
+      this.signature = signature
+      for (const listener of this.listeners) listener(goals)
+    } catch {
+      // A dropped SSH connection or a half-written goal is retried next tick.
+    } finally {
+      this.polling = false
+    }
+  }
+
+  private stopPolling(): void {
+    clearInterval(this.poller ?? undefined)
+    this.poller = null
+  }
+
   resetWatching(): void {
-    this.watcher?.close()
-    this.watcher = null
-    if (this.debounce) clearTimeout(this.debounce)
+    this.stopPolling()
+    clearTimeout(this.debounce ?? undefined)
     this.debounce = null
+    this.signature = ''
     if (this.listeners.size) this.startWatching()
   }
 
   dispose(): void {
-    this.watcher?.close()
-    this.watcher = null
-    if (this.debounce) clearTimeout(this.debounce)
+    this.stopPolling()
+    clearTimeout(this.debounce ?? undefined)
     this.debounce = null
   }
 }

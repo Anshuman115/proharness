@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { LoopState } from '../src/shared/types'
+import { LocalHost } from '../src/main/host/local'
 import { AgentFactory } from '../src/main/services/agents'
 import { GitService } from '../src/main/services/git'
 import { OmpService } from '../src/main/services/omp'
@@ -41,8 +42,9 @@ describe.skipIf(!live)('loop live', () => {
 
     const settings = { workspacePath: root } as unknown as SettingsService
     const omp = new OmpService(() => '', () => root, join(root, '.omp-status.json'))
-    const plan = new PlanService(() => root)
-    const gitService = new GitService(() => root)
+    const host = new LocalHost()
+    const plan = new PlanService(() => host, () => root)
+    const gitService = new GitService(() => host, () => root)
     const overlay = writeHostToolOverlay(join(root, '.ph'))
     git('config', 'core.excludesFile', '/dev/null')
     writeFileSync(join(root, '.git', 'info', 'exclude'), '/.ph/\n/.omp-status.json\n')

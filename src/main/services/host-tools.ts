@@ -72,7 +72,7 @@ export function createPlanTools(options: {
       description: 'List the project goals under goals/ with progress and open-task counts.',
       parameters: obj({}),
       run: async () => {
-        const goals = plan.listGoals()
+        const goals = await plan.listGoals()
         if (!goals.length) return 'No goals found under goals/. A goal is a folder with DESIGN.md and PLAN.md.'
         return goals
           .map((goal) => `- ${goal.id}: ${goal.title} — ${goal.progress}% (${goal.openCount} open / ${goal.taskCount} tasks) — ${goal.status}`)
@@ -86,19 +86,19 @@ export function createPlanTools(options: {
       parameters: obj({ goal: goalArg }),
       run: async (args) => {
         const goal = str(args.goal)
-        if (goal) return formatGoal(plan.readGoal(goal))
-        const goals = plan.listGoals()
+        if (goal) return formatGoal(await plan.readGoal(goal))
+        const goals = await plan.listGoals()
         if (!goals.length) return 'No goals found under goals/.'
-        return goals
-          .map((summary) => {
+        const formatted = await Promise.all(
+          goals.map(async (summary) => {
             try {
-              return formatGoal(plan.readGoal(summary.id)).slice(0, 40_000)
+              return formatGoal(await plan.readGoal(summary.id)).slice(0, 40_000)
             } catch (error) {
               return `${summary.id}: ${(error as Error).message}`
             }
           })
-          .join('\n\n---\n\n')
-          .slice(0, 160_000)
+        )
+        return formatted.join('\n\n---\n\n').slice(0, 160_000)
       }
     },
     {
@@ -108,7 +108,7 @@ export function createPlanTools(options: {
       parameters: obj({ goal: goalArg }, ['goal']),
       run: async (args) => {
         const goal = required(args, 'goal')
-        return formatTask(plan.readGoal(goal), plan.nextTask(goal))
+        return formatTask(await plan.readGoal(goal), await plan.nextTask(goal))
       }
     },
     {
@@ -122,7 +122,7 @@ export function createPlanTools(options: {
       run: async (args) => {
         const goal = required(args, 'goal')
         const taskId = required(args, 'task_id')
-        plan.addTaskNote(goal, taskId, required(args, 'note'))
+        await plan.addTaskNote(goal, taskId, required(args, 'note'))
         return `Added a note under ${goal}/${taskId}.`
       }
     },
@@ -160,9 +160,9 @@ export function createPlanTools(options: {
       run: async (args) => {
         const goal = required(args, 'goal')
         const taskId = required(args, 'task_id')
-        const detail = plan.setTaskChecked(goal, taskId, true, str(args.note) || undefined)
+        const detail = await plan.setTaskChecked(goal, taskId, true, str(args.note) || undefined)
         return `Checked off ${taskId} in ${goal}. Progress ${detail.progress}% (${detail.openCount} open). Next: ${
-          plan.nextTask(goal)?.taskTitle || 'none, goal complete'
+          (await plan.nextTask(goal))?.taskTitle || 'none, goal complete'
         }`
       }
     })

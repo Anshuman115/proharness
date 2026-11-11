@@ -49,7 +49,7 @@ export function registerIpc(deps: IpcDependencies): void {
     terminal.dispose()
     plan.resetWatching()
     git.resetWatching()
-    send(CH.goalsChanged, plan.listGoals())
+    send(CH.goalsChanged, await plan.listGoals())
     send(CH.gitChanged, await git.summary())
   }
 
@@ -61,7 +61,7 @@ export function registerIpc(deps: IpcDependencies): void {
 
   ipcMain.handle(CH.bootstrap, async () => ({
     settings: settings.publicSettings(),
-    goals: plan.listGoals(),
+    goals: await plan.listGoals(),
     git: await git.summary(),
     omp: omp.current(),
     appVersion: deps.appVersion,
@@ -96,22 +96,22 @@ export function registerIpc(deps: IpcDependencies): void {
 
   ipcMain.handle(CH.goalsList, () => plan.listGoals())
   ipcMain.handle(CH.goalsInit, async () => {
-    plan.ensureRoot()
+    await plan.ensureRoot()
     plan.resetWatching()
     const { tracked } = await git.excludeGoals()
-    send(CH.goalsChanged, plan.listGoals())
+    send(CH.goalsChanged, await plan.listGoals())
     return { root: plan.goalsRoot, tracked }
   })
   ipcMain.handle(CH.goalsCreate, async (_event, title: string) => {
-    const summary = plan.createGoal(title)
+    const summary = await plan.createGoal(title)
     await git.excludeGoals()
-    send(CH.goalsChanged, plan.listGoals())
+    send(CH.goalsChanged, await plan.listGoals())
     return summary
   })
   ipcMain.handle(CH.goalsRead, (_event, goalId: string) => plan.readGoal(goalId))
-  ipcMain.handle(CH.goalsToggleTask, (_event, goalId: string, taskId: string, checked: boolean) => {
-    const detail = plan.setTaskChecked(goalId, taskId, checked)
-    send(CH.goalsChanged, plan.listGoals())
+  ipcMain.handle(CH.goalsToggleTask, async (_event, goalId: string, taskId: string, checked: boolean) => {
+    const detail = await plan.setTaskChecked(goalId, taskId, checked)
+    send(CH.goalsChanged, await plan.listGoals())
     return detail
   })
 

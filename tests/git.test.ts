@@ -3,10 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { LocalHost } from '../src/main/host/local'
 import { GitService } from '../src/main/services/git'
 
 let root = ''
 let service: GitService
+const host = new LocalHost()
 
 function git(...args: string[]): string {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' })
@@ -20,7 +22,7 @@ beforeEach(() => {
   writeFileSync(join(root, 'hello.txt'), 'one\ntwo\n')
   git('add', '-A')
   git('commit', '-qm', 'initial')
-  service = new GitService(() => root)
+  service = new GitService(() => host, () => root)
 })
 
 afterEach(() => {

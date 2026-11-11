@@ -1,10 +1,5 @@
-import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, watch, type FSWatcher } from 'node:fs'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
 import type { GitChangeStatus, GitCommitInfo, GitFileChange, GitFileDiff, GitSummary } from '@shared/types'
-
-const execFileAsync = promisify(execFile)
+import type { WorkspaceHost } from '../host/host'
 
 interface GitResult {
   stdout: string
@@ -40,37 +35,29 @@ function statusFromPorcelain(x: string, y: string): GitChangeStatus {
 }
 
 export class GitService {
-  private watcher: FSWatcher | null = null
   private debounce: NodeJS.Timeout | null = null
   private poller: NodeJS.Timeout | null = null
+  private polling = false
   private lastSignature = ''
   private listeners = new Set<(summary: GitSummary) => void>()
 
   constructor(
+    private readonly host: () => WorkspaceHost,
     private readonly workspace: () => string
   ) {}
 
   private async git(args: string[], allowCodes: number[] = [0]): Promise<GitResult> {
-    try {
-      const result = await execFileAsync('git', args, {
-        cwd: this.workspace(),
-        maxBuffer: 20 * 1024 * 1024,
-        timeout: 30_000,
-        encoding: 'utf8'
-      })
-      return { stdout: result.stdout, stderr: result.stderr, code: 0 }
-    } catch (error) {
-      const err = error as { stdout?: string; stderr?: string; code?: number; message?: string }
-      const code = typeof err.code === 'number' ? err.code : 1
-      if (allowCodes.includes(code)) {
-        return { stdout: err.stdout || '', stderr: err.stderr || '', code }
-      }
-      throw new Error((err.stderr || err.message || 'git command failed').trim())
-    }
+    const result = await this.host().exec('git', args, {
+      cwd: this.workspace(),
+      timeoutMs: 30_000,
+      maxBuffer: 20 * 1024 * 1024
+    })
+    if (allowCodes.includes(result.code)) return result
+    throw new Error((result.stderr || 'git command failed').trim())
   }
 
   private async root(): Promise<string | null> {
-    if (!existsSync(this.workspace())) return null
+    if (!(await this.host().stat(this.workspace()))) return null
     try {
       const result = await this.git(['rev-parse', '--show-toplevel'])
       return result.stdout.trim() || null
@@ -149,9 +136,10 @@ export class GitService {
     for (const file of files) {
       if (file.status !== 'untracked') continue
       try {
-        const absolute = resolve(root, file.path)
-        if (statSync(absolute).size > 3 * 1024 * 1024) continue
-        const content = readFileSync(absolute)
+        const absolute = this.host().path.resolve(root, file.path)
+        const info = await this.host().stat(absolute)
+        if (!info || info.size > 3 * 1024 * 1024) continue
+        const content = await this.host().readFile(absolute)
         if (content.subarray(0, 8_000).includes(0)) continue
         const textContent = content.toString('utf8')
         file.additions = textContent ? textContent.replace(/\r?\n$/, '').split(/\r?\n/).length : 0
@@ -173,6 +161,7 @@ export class GitService {
   }
 
   private safePath(path: string, root: string): string {
+    const { isAbsolute, resolve, sep } = this.host().path
     if (!path || isAbsolute(path)) throw new Error('Diff paths must be relative to the repository.')
     const absolute = resolve(root, path)
     if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
@@ -194,10 +183,11 @@ export class GitService {
     }
 
     if (untracked) {
-      if (!existsSync(absolute)) {
+      const info = await this.host().stat(absolute)
+      if (!info) {
         return { path, diff: '', binary: false, untracked: true, truncated: false }
       }
-      const size = statSync(absolute).size
+      const size = info.size
       if (size > 3 * 1024 * 1024) {
         return {
           path,
@@ -207,7 +197,7 @@ export class GitService {
           truncated: true
         }
       }
-      const buffer = readFileSync(absolute)
+      const buffer = await this.host().readFile(absolute)
       const probe = buffer.subarray(0, 8_000)
       if (probe.includes(0)) {
         return { path, diff: `Binary file: ${path}`, binary: true, untracked: true, truncated: false }
@@ -297,18 +287,22 @@ export class GitService {
    * needs `git rm --cached` by the user.
    */
   async excludeGoals(): Promise<{ excluded: boolean; tracked: boolean }> {
+    const host = this.host()
     const root = await this.root()
     if (!root) return { excluded: false, tracked: false }
-    const rel = relative(realpathSync(root), resolve(realpathSync(this.workspace()), PLAN_DIR)).split(sep).join('/')
+    const rel = host.path
+      .relative(await host.realpath(root), host.path.resolve(await host.realpath(this.workspace()), PLAN_DIR))
+      .split(host.path.sep)
+      .join('/')
     if (rel.startsWith('..')) return { excluded: false, tracked: false }
     const pattern = `/${rel}/`
     const pathResult = await this.git(['rev-parse', '--git-path', 'info/exclude'])
-    const excludeFile = resolve(this.workspace(), pathResult.stdout.trim())
-    const current = existsSync(excludeFile) ? readFileSync(excludeFile, 'utf8') : ''
+    const excludeFile = host.path.resolve(this.workspace(), pathResult.stdout.trim())
+    const current = (await host.stat(excludeFile)) ? await host.readText(excludeFile) : ''
     if (!current.split(/\r?\n/).some((line) => line.trim() === pattern)) {
-      mkdirSync(dirname(excludeFile), { recursive: true })
+      await host.mkdirp(host.path.dirname(excludeFile))
       const prefix = current && !current.endsWith('\n') ? '\n' : ''
-      appendFileSync(excludeFile, `${prefix}# ProHarness planning state (local only)\n${pattern}\n`, 'utf8')
+      await host.appendText(excludeFile, `${prefix}# ProHarness planning state (local only)\n${pattern}\n`)
     }
     const tracked = await this.git(['ls-files', '--', PLAN_DIR], [0])
     return { excluded: true, tracked: Boolean(tracked.stdout.trim()) }
@@ -359,34 +353,34 @@ export class GitService {
   }
 
   private startWatching(): void {
-    if (this.watcher) return
+    if (this.poller) return
+    void this.seedSignature()
+    const interval = this.host().kind === 'ssh' ? 5_000 : 2_500
+    this.poller = setInterval(() => void this.poll(), interval)
+    this.poller.unref()
+  }
+
+  private async seedSignature(): Promise<void> {
     try {
-      this.watcher = watch(this.workspace(), { recursive: true }, (_event, filename) => {
-        if (!filename) return
-        const value = String(filename).replace(/\\/g, '/')
-        if (value === '.git/index' || value === '.git/HEAD') {
-          this.emitChanged()
-          return
-        }
-        if (
-          value.startsWith('.git') ||
-          value.includes('node_modules') ||
-          value.startsWith('out/') ||
-          value.startsWith('.cache/') ||
-          value.startsWith('release/') ||
-          value.startsWith('dist/')
-        ) {
-          return
-        }
-        this.emitChanged()
-      })
+      this.lastSignature = JSON.stringify(await this.summary())
     } catch {
-      // Recursive watching is unavailable on some Linux filesystems/Node builds.
-      this.watcher = null
+      // Keep the previous signature.
     }
-    if (!this.watcher && !this.poller) {
-      this.poller = setInterval(() => this.emitChanged(), 4_000)
-      this.poller.unref()
+  }
+
+  private async poll(): Promise<void> {
+    if (this.polling) return
+    this.polling = true
+    try {
+      const summary = await this.summary()
+      const signature = JSON.stringify(summary)
+      if (signature === this.lastSignature) return
+      this.lastSignature = signature
+      for (const listener of this.listeners) listener(summary)
+    } catch {
+      // A transient git or filesystem error is retried on the next tick.
+    } finally {
+      this.polling = false
     }
   }
 
@@ -397,11 +391,13 @@ export class GitService {
   }
 
   dispose(): void {
-    this.watcher?.close()
-    this.watcher = null
-    if (this.poller) clearInterval(this.poller)
-    this.poller = null
-    if (this.debounce) clearTimeout(this.debounce)
+    this.stopPolling()
+    clearTimeout(this.debounce ?? undefined)
     this.debounce = null
+  }
+
+  private stopPolling(): void {
+    clearInterval(this.poller ?? undefined)
+    this.poller = null
   }
 }

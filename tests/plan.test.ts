@@ -2,10 +2,12 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { LocalHost } from '../src/main/host/local'
 import { PlanService } from '../src/main/services/plan'
 
 let root = ''
 let service: PlanService
+const host = new LocalHost()
 
 const design = `---
 title: Demo Goal
@@ -37,7 +39,7 @@ beforeEach(() => {
   mkdirSync(join(root, 'goals', 'demo'), { recursive: true })
   writeFileSync(join(root, 'goals', 'demo', 'DESIGN.md'), design)
   writeFileSync(join(root, 'goals', 'demo', 'PLAN.md'), plan)
-  service = new PlanService(() => root)
+  service = new PlanService(() => host, () => root)
 })
 
 afterEach(() => {
@@ -46,8 +48,8 @@ afterEach(() => {
 })
 
 describe('PlanService', () => {
-  it('lists and parses phases, tasks, progress and next task', () => {
-    const goals = service.listGoals()
+  it('lists and parses phases, tasks, progress and next task', async () => {
+    const goals = await service.listGoals()
     expect(goals).toHaveLength(1)
     expect(goals[0]).toMatchObject({
       id: 'demo',
@@ -58,7 +60,7 @@ describe('PlanService', () => {
       progress: 25
     })
 
-    const detail = service.readGoal('demo')
+    const detail = await service.readGoal('demo')
     expect(detail.phases[0].tasks[1]).toMatchObject({
       id: '1.2',
       title: 'Next thing',
@@ -66,15 +68,15 @@ describe('PlanService', () => {
       note: 'existing note'
     })
 
-    expect(service.nextTask('demo')).toMatchObject({
+    expect(await service.nextTask('demo')).toMatchObject({
       taskId: '1.2',
       taskTitle: 'Next thing',
       phaseTitle: 'Foundation'
     })
   })
 
-  it('checks a task off atomically and preserves the rest of the plan', () => {
-    const detail = service.setTaskChecked('demo', '1.2', true)
+  it('checks a task off atomically and preserves the rest of the plan', async () => {
+    const detail = await service.setTaskChecked('demo', '1.2', true)
     expect(detail.openCount).toBe(2)
     const raw = readFileSync(join(root, 'goals', 'demo', 'PLAN.md'), 'utf8')
     expect(raw).toContain('- [x] **1.2** Next thing')
@@ -82,34 +84,34 @@ describe('PlanService', () => {
     expect(raw).toContain('  - existing note')
   })
 
-  it('appends a note under the selected task', () => {
-    service.addTaskNote('demo', '1.2', 'Verified with unit tests.')
+  it('appends a note under the selected task', async () => {
+    await service.addTaskNote('demo', '1.2', 'Verified with unit tests.')
     const raw = readFileSync(join(root, 'goals', 'demo', 'PLAN.md'), 'utf8')
     expect(raw).toContain('Verified with unit tests.')
   })
 
-  it('rejects unknown goals and path traversal', () => {
-    expect(() => service.readGoal('../etc')).toThrow(/Invalid goal id/)
-    expect(() => service.readGoal('missing')).toThrow(/not found/)
+  it('rejects unknown goals and path traversal', async () => {
+    await expect(service.readGoal('../etc')).rejects.toThrow(/Invalid goal id/)
+    await expect(service.readGoal('missing')).rejects.toThrow(/not found/)
   })
 })
 
 describe('PlanService edge cases', () => {
-  it('ignores checklist examples inside code fences and keeps CRLF line endings', () => {
+  it('ignores checklist examples inside code fences and keeps CRLF line endings', async () => {
     const crlf = ['## Phase 1 — Docs', '- [ ] **1.1** Real task', '```md', '- [ ] **9.9** Example only', '```', ''].join('\r\n')
     writeFileSync(join(root, 'goals', 'demo', 'PLAN.md'), crlf)
-    const detail = service.readGoal('demo')
+    const detail = await service.readGoal('demo')
     expect(detail.taskCount).toBe(1)
-    service.setTaskChecked('demo', '1.1', true)
+    await service.setTaskChecked('demo', '1.1', true)
     const raw = readFileSync(join(root, 'goals', 'demo', 'PLAN.md'), 'utf8')
     expect(raw).toContain('- [x] **1.1** Real task\r\n')
     expect(raw).toContain('- [ ] **9.9** Example only')
   })
 
-  it('does not create goals/ just by listing', () => {
+  it('does not create goals/ just by listing', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'proharness-empty-'))
-    const other = new PlanService(() => empty)
-    expect(other.listGoals()).toEqual([])
+    const other = new PlanService(() => host, () => empty)
+    expect(await other.listGoals()).toEqual([])
     expect(existsSync(join(empty, 'goals'))).toBe(false)
     rmSync(empty, { recursive: true, force: true })
   })

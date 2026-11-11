@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, session, shell } from 'electron'
 import { join } from 'node:path'
 import { CH } from '@shared/channels'
+import { LocalHost } from './host/local'
 import { registerIpc } from './ipc'
 import { shellEnv } from './omp/env'
 import { AgentFactory } from './services/agents'
@@ -46,8 +47,9 @@ if (!gotLock) {
       () => settings.workspacePath,
       join(dataDir, 'omp-status.json')
     )
-    const plan = new PlanService(() => settings.workspacePath)
-    const git = new GitService(() => settings.workspacePath)
+    const localHost = new LocalHost()
+    const plan = new PlanService(() => localHost, () => settings.workspacePath)
+    const git = new GitService(() => localHost, () => settings.workspacePath)
     const broker = new UiBroker()
     const sessions = new SessionManager(settings, omp, plan, git, broker, dataDir)
     const agents = new AgentFactory(settings, omp, plan, git, broker, () => sessions.overlayPath)

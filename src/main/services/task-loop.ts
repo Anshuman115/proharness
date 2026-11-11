@@ -184,7 +184,7 @@ export class TaskLoopService {
     if (implementerModel && sameModel(implementerModel, reviewerModel)) {
       throw new Error('The reviewer must be a different model from the implementer.')
     }
-    const goal = this.plan.readGoal(config.goalId)
+    const goal = await this.plan.readGoal(config.goalId)
     if (!goal.openCount) throw new Error('This goal has no open tasks.')
     const git = await this.git.summary()
     if (!git.isRepo) throw new Error('The workspace is not a git repository.')
@@ -416,12 +416,12 @@ export class TaskLoopService {
     await this.checkpoint(signal)
 
     this.setStep('committing')
-    const commit = await this.git.commitAll(this.commitMessage(this.plan.readGoal(goal.id), task, config))
+    const commit = await this.git.commitAll(this.commitMessage(await this.plan.readGoal(goal.id), task, config))
     record.commitHash = commit.hash
     this.log('success', `Committed ${commit.hash}.`)
 
     this.setStep('marking')
-    this.plan.setTaskChecked(goal.id, task.taskId, true, `${commit.hash} · reviewed by ${config.reviewerModel}`)
+    await this.plan.setTaskChecked(goal.id, task.taskId, true, `${commit.hash} · reviewed by ${config.reviewerModel}`)
     this.log('info', `Checked off ${task.taskId} in goals/${goal.id}/PLAN.md (local, not committed).`)
 
     record.status = 'committed'
@@ -454,10 +454,10 @@ export class TaskLoopService {
         if (!tree.clean) {
           throw new Error(`The working tree changed between tasks (${tree.files.length} file(s)). Stopped so a commit cannot absorb unrelated work.`)
         }
-        const goal = this.plan.readGoal(config.goalId)
+        const goal = await this.plan.readGoal(config.goalId)
         this.state.goalTitle = goal.title
         this.state.queue = openTasks(goal)
-        const task = this.plan.nextTask(config.goalId)
+        const task = await this.plan.nextTask(config.goalId)
         if (!task) {
           this.state.status = 'complete'
           this.state.currentStep = 'complete'
